@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kai — your AI teacher</title>
+<style>
+  :root { color-scheme: light dark; font-family: Georgia, serif; }
+  body { max-width: 620px; margin: 3rem auto; padding: 0 1rem; line-height: 1.55; }
+  h1 { font-size: 1.6rem; } .muted { opacity: .65; font-size: .9rem; }
+  input, select, textarea { width: 100%; padding: .55rem; margin: .3rem 0 .8rem;
+    font: inherit; border: 1px solid #8886; border-radius: 8px; box-sizing: border-box; }
+  button { font: inherit; padding: .55rem 1.1rem; border-radius: 8px;
+    border: 1px solid #8886; cursor: pointer; margin: .2rem .3rem .2rem 0; }
+  button.primary { background: #b5562d; color: #fff; border-color: #b5562d; }
+  .card { border: 1px solid #8884; border-radius: 12px; padding: 1.2rem; margin: 1rem 0; }
+  .time-btns button { font-size: 1.1rem; padding: 1rem 1.4rem; }
+  pre { white-space: pre-wrap; font-family: inherit; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>Kai</h1>
+<p class="muted">Your teacher. You never pick a lesson — just show up.</p>
+
+<div id="auth" class="card">
+  <input id="email" type="email" placeholder="email">
+  <input id="password" type="password" placeholder="password (8+ chars)">
+  <button class="primary" onclick="doAuth('register')">Sign up</button>
+  <button onclick="doAuth('login')">Log in</button>
+</div>
+
+<div id="onboarding" class="card hidden">
+  <h2>Tell Kai about you</h2>
+  <input id="goal" placeholder="What do you want to learn? (e.g. Spanish)">
+  <select id="level">
+    <option value="beginner">Beginner</option>
+    <option value="intermediate">Intermediate</option>
+    <option value="advanced">Advanced</option>
+  </select>
+  <input id="interests" placeholder="Interests (comma-separated)">
+  <input id="weekly" type="number" value="60" placeholder="Minutes per week">
+  <input id="motivation" placeholder="Why does this matter to you?">
+  <button class="primary" onclick="onboard()">Start learning</button>
+</div>
+
+<div id="dashboard" class="card hidden">
+  <h2>How much time do you have?</h2>
+  <div class="time-btns">
+    <button onclick="recommend(2)">2 min</button>
+    <button onclick="recommend(5)">5 min</button>
+    <button onclick="recommend(10)">10 min</button>
+    <button onclick="recommend(20)">20 min</button>
+  </div>
+</div>
+
+<div id="activity" class="card hidden">
+  <h2 id="act-title"></h2>
+  <p class="muted" id="act-why"></p>
+  <pre id="act-content"></pre>
+  <h3>How did it go?</h3>
+  <label>Confidence (0–10)</label>
+  <input id="conf" type="number" min="0" max="10" value="7">
+  <label>Anything you got wrong? (comma-separated)</label>
+  <input id="mistakes" placeholder="leave blank if none">
+  <button class="primary" onclick="finish()">Done</button>
+</div>
+
+<div id="summary" class="card hidden">
+  <h2>Session saved</h2>
+  <pre id="summary-body"></pre>
+  <button class="primary" onclick="show('dashboard')">Back</button>
+</div>
+
+<script>
+let token = localStorage.getItem('token') || '';
+let current = null;
+const $ = id => document.getElementById(id);
+const show = id => {
+  for (const s of ['auth','onboarding','dashboard','activity','summary'])
+    $(s).classList.toggle('hidden', s !== id);
+};
+const api = async (path, opts = {}) => {
+  const res = await fetch(path, { ...opts, headers: {
+    'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token,
+    ...(opts.headers || {}) }});
+  if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+  return res.json();
+};
+async function doAuth(kind) {
+  try {
+    const r = await api('/api/' + kind, { method: 'POST', body: JSON.stringify({
+      email: $('email').value, password: $('password').value })});
+    token = r.token; localStorage.setItem('token', token);
+    try { await api('/api/me'); show('dashboard'); }
+    catch { show('onboarding'); }
+  } catch (e) { alert(e.message); }
+}
+async function onboard() {
+  await api('/api/onboarding', { method: 'POST', body: JSON.stringify({
+    goal: $('goal').value, level: $('level').value,
+    interests: $('interests').value.split(',').map(s => s.trim()).filter(Boolean),
+    weekly_minutes: +$('weekly').value, motivation: $('motivation').value })});
+  show('dashboard');
+}
+async function recommend(mins) {
+  const r = await api('/api/recommendation?minutes=' + mins);
+  current = r;
+  $('act-title').textContent = r.experience.title +
+    ' · ' + r.recommendation.estimated_minutes + ' min';
+  $('act-why').textContent = r.recommendation.explanation;
+  $('act-content').textContent = r.experience.content;
+  show('activity');
+}
+async function finish() {
+  const rec = current.recommendation;
+  const concepts = rec.concepts.length ? rec.concepts
+    : ['session-' + Date.now().toString(36)];
+  const r = await api('/api/session-summary', { method: 'POST', body: JSON.stringify({
+    activity_type: rec.activity_type, concepts,
+    mistakes: $('mistakes').value.split(',').map(s => s.trim()).filter(Boolean),
+    confidence: (+$('conf').value) / 10, difficulty: rec.difficulty,
+    duration_seconds: rec.estimated_minutes * 60, engaged: true })});
+  $('summary-body').textContent = JSON.stringify(r, null, 2);
+  show('summary');
+}
+(async () => {
+  if (!token) return show('auth');
+  try { await api('/api/me'); show('dashboard'); }
+  catch { show('auth'); }
+})();
+</script>
+</body>
+</html>
