@@ -88,6 +88,28 @@ class AnthropicTeacher:
         )
         return "".join(b.text for b in response.content if b.type == "text")
 
+    def assess(self, transcript: list[dict[str, str]], context: dict[str, Any]) -> dict:
+        """Grade a finished conversation into structured session results."""
+        planned = context.get("concepts") or []
+        prompt = (
+            "The conversation below has ended. Assess the learner's session "
+            "and respond with ONLY a JSON object, no other text:\n"
+            '{"concepts": ["<id of each concept actually practiced>"], '
+            '"mistakes": ["<short-kebab-case signature of each recurring or '
+            'notable mistake>"], "confidence": <your 0..1 estimate of the '
+            "learner's confidence>, "
+            '"notes": "<one sentence for the learner>"}\n'
+            f"Planned concepts were: {json.dumps(planned)} — reuse those ids "
+            "where they apply; add kebab-case ids for anything else practiced.\n\n"
+            "Transcript:\n"
+            + "\n".join(f"{m['role']}: {m['content']}" for m in transcript)
+        )
+        raw = self.generate(prompt, context)
+        parsed = _extract_json(raw)
+        if parsed is not None:
+            return _clean_assessment(parsed, planned)
+        return _fallback_assessment(planned)
+
 
 class ScriptedTeacher:
     """Deterministic fallback: keeps the product runnable and testable
@@ -106,6 +128,45 @@ class ScriptedTeacher:
     def chat(self, messages: list[dict[str, str]], context: dict[str, Any]) -> str:
         last = messages[-1]["content"] if messages else ""
         return f"[Kai] Interesting — tell me more about: {last[:80]}"
+
+    def assess(self, transcript: list[dict[str, str]], context: dict[str, Any]) -> dict:
+        return _fallback_assessment(context.get("concepts") or [])
+
+
+def _extract_json(text: str) -> dict | None:
+    """Pull the first JSON object out of model output, tolerating prose."""
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        parsed = json.loads(text[start:end + 1])
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _clean_assessment(parsed: dict, planned: list) -> dict:
+    concepts = [str(c) for c in parsed.get("concepts") or planned] or ["conversation-practice"]
+    mistakes = [str(m) for m in parsed.get("mistakes") or []]
+    try:
+        confidence = min(1.0, max(0.0, float(parsed.get("confidence", 0.6))))
+    except (TypeError, ValueError):
+        confidence = 0.6
+    return {
+        "concepts": concepts,
+        "mistakes": mistakes,
+        "confidence": confidence,
+        "notes": str(parsed.get("notes", "")),
+    }
+
+
+def _fallback_assessment(planned: list) -> dict:
+    return {
+        "concepts": [str(c) for c in planned] or ["conversation-practice"],
+        "mistakes": [],
+        "confidence": 0.6,
+        "notes": "Session recorded. Keep the conversations coming!",
+    }
 
 
 def make_teacher():

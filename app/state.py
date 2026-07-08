@@ -1,0 +1,167 @@
+"""Shared application state and the single write path into the learner model.
+
+Both the generic session-summary endpoint and the conversation experience
+funnel their results through `apply_session_results` — one code path turns
+"what happened in a session" into learner-model updates, whatever the
+experience type. New experiences (voice calls included) reuse it as-is.
+"""
+from __future__ import annotations
+
+import json
+import time
+
+from fastapi import Depends, Header, HTTPException
+
+from learner_model import InteractionEvent, LearnerProfile, Modality, new_session_id
+from learner_model.history import SessionHistory
+from learner_model.knowledge import Concept, KnowledgeState
+from learner_model.store import load_profile as _load, save_profile
+from recommendation import RecommendationEngine, SessionContext
+
+from . import auth, db
+from .teacher import make_teacher
+
+SUBJECT = "primary"  # MVP: one subject track per learner; the model is already multi-subject
+
+engine = RecommendationEngine()
+teacher = make_teacher()
+
+
+def current_user(authorization: str = Header(default="")) -> str:
+    token = authorization.removeprefix("Bearer ").strip()
+    user_id = auth.user_id_for_token(token) if token else None
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user_id
+
+
+def load_profile(user_id: str) -> LearnerProfile:
+    try:
+        return _load(user_id, db.PROFILES_DIR)
+    except FileNotFoundError:
+        raise HTTPException(status_code=400, detail="Complete onboarding first")
+
+
+def knowledge(user_id: str) -> KnowledgeState:
+    ks = KnowledgeState(subject=SUBJECT)
+    path = db.DATA_DIR / "concepts" / f"{user_id}.json"
+    if path.exists():
+        ks.add_concepts([
+            Concept(subject=SUBJECT, **c) for c in json.loads(path.read_text())
+        ])
+    return ks
+
+
+def save_concepts(user_id: str, ks: KnowledgeState) -> None:
+    path = db.DATA_DIR / "concepts" / f"{user_id}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps([
+        {"id": c.id, "name": c.name, "difficulty": c.difficulty,
+         "prerequisites": list(c.prerequisites)}
+        for c in ks.concepts.values()
+    ]))
+
+
+def onboarding(user_id: str) -> dict:
+    with db.connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM onboarding WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=400, detail="Complete onboarding first")
+    return dict(row)
+
+
+def next_recommendation(user_id: str, minutes: float) -> dict:
+    """A fresh recommendation reflecting everything learned so far."""
+    profile = load_profile(user_id)
+    ob = onboarding(user_id)
+    rec = engine.recommend(
+        profile, knowledge(user_id),
+        SessionContext(subject=SUBJECT, available_minutes=minutes, goal=ob["goal"]),
+    )
+    return {
+        "activity_type": rec.activity_type.value,
+        "difficulty": rec.difficulty,
+        "concepts": list(rec.concepts),
+        "explanation": rec.explanation,
+        "expected_outcome": rec.expected_outcome,
+        "estimated_minutes": rec.estimated_minutes,
+    }
+
+
+def apply_session_results(
+    user_id: str,
+    *,
+    activity_type: str,
+    concepts: list[str],
+    mistakes: list[str],
+    confidence: float | None,
+    duration_seconds: float,
+    difficulty: float,
+    engaged: bool = True,
+) -> dict:
+    """The single write path after ANY completed activity: feeds the
+    learner model, updates the knowledge state, records the summary, and
+    returns mastery + next review date."""
+    profile = load_profile(user_id)
+    ks = knowledge(user_id)
+    history = SessionHistory(db.HISTORY_DIR)
+    session_id = new_session_id()
+    now = time.time()
+    modality = Modality(activity_type)
+    missed = set(mistakes)
+
+    for concept_id in concepts:
+        if concept_id not in ks.concepts:
+            ks.add_concepts([Concept(
+                id=concept_id, subject=SUBJECT,
+                name=concept_id.replace("-", " "),
+                difficulty=difficulty,
+            )])
+        event = InteractionEvent(
+            learner_id=user_id,
+            subject=SUBJECT,
+            item_id=concept_id,
+            modality=modality,
+            correct=concept_id not in missed,
+            confidence=confidence,
+            difficulty=difficulty,
+            duration_seconds=duration_seconds / max(1, len(concepts)),
+            engaged=engaged,
+            error_signature=concept_id if concept_id in missed else None,
+            timestamp=now,
+            session_id=session_id,
+        )
+        history.append(event)
+        profile.update(event)
+
+    save_profile(profile, db.PROFILES_DIR)
+    save_concepts(user_id, ks)
+
+    statuses = {s.concept.id: s for s in ks.status(profile.memory, now)}
+    practiced = [statuses[c] for c in concepts if c in statuses]
+    mastery = (
+        sum(s.retrievability for s in practiced) / len(practiced) if practiced else None
+    )
+    review_due = min(
+        (s.review_due_ts for s in practiced if s.review_due_ts), default=None
+    )
+
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO session_summaries (user_id, created_at, activity_type, "
+            "concepts, mistakes, confidence, estimated_mastery, review_due_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, now, activity_type, json.dumps(concepts),
+             json.dumps(mistakes), confidence, mastery, review_due),
+        )
+
+    return {
+        "concepts_practiced": concepts,
+        "mistakes": mistakes,
+        "confidence": confidence,
+        "estimated_mastery": round(mastery, 3) if mastery is not None else None,
+        "recommended_review_at": review_due,
+        "learner_summary": profile.summary(),
+    }

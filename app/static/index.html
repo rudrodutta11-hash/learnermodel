@@ -13,10 +13,25 @@
   button { font: inherit; padding: .55rem 1.1rem; border-radius: 8px;
     border: 1px solid #8886; cursor: pointer; margin: .2rem .3rem .2rem 0; }
   button.primary { background: #b5562d; color: #fff; border-color: #b5562d; }
+  button:disabled { opacity: .5; cursor: wait; }
   .card { border: 1px solid #8884; border-radius: 12px; padding: 1.2rem; margin: 1rem 0; }
   .time-btns button { font-size: 1.1rem; padding: 1rem 1.4rem; }
   pre { white-space: pre-wrap; font-family: inherit; }
   .hidden { display: none; }
+
+  /* Chat */
+  #chat-messages { display: flex; flex-direction: column; gap: .5rem;
+    max-height: 55vh; overflow-y: auto; padding: .5rem 0; }
+  .bubble { max-width: 85%; padding: .6rem .9rem; border-radius: 14px;
+    white-space: pre-wrap; }
+  .bubble.teacher { align-self: flex-start; background: #b5562d1a;
+    border: 1px solid #b5562d40; }
+  .bubble.learner { align-self: flex-end; background: #8882;
+    border: 1px solid #8884; }
+  .bubble.pending { opacity: .55; font-style: italic; }
+  #chat-compose { display: flex; gap: .5rem; align-items: flex-start; }
+  #chat-compose input { flex: 1; margin: 0; }
+  #chat-timer { float: right; }
 </style>
 </head>
 <body>
@@ -52,6 +67,7 @@
     <button onclick="recommend(10)">10 min</button>
     <button onclick="recommend(20)">20 min</button>
   </div>
+  <div id="next-rec" class="muted"></div>
 </div>
 
 <div id="activity" class="card hidden">
@@ -66,18 +82,36 @@
   <button class="primary" onclick="finish()">Done</button>
 </div>
 
+<!-- Conversation with Kai.
+     Voice-ready by design: everything flows through sendToKai(text) and
+     renderMessage(role, text). A future voice mode adds a mic button that
+     does STT -> sendToKai(), and speaks replies with TTS in renderMessage.
+     No session, event, or summary logic needs to change. -->
+<div id="chat" class="card hidden">
+  <h2>Talk with Kai <span id="chat-timer" class="muted"></span></h2>
+  <p class="muted" id="chat-why"></p>
+  <div id="chat-messages"></div>
+  <form id="chat-compose" onsubmit="return submitChat(event)">
+    <input id="chat-input" placeholder="Say something…" autocomplete="off" required>
+    <button class="primary" id="chat-send" type="submit">Send</button>
+  </form>
+  <button id="chat-end" onclick="endChat()">End session</button>
+</div>
+
 <div id="summary" class="card hidden">
   <h2>Session saved</h2>
-  <pre id="summary-body"></pre>
+  <div id="summary-body"></div>
   <button class="primary" onclick="show('dashboard')">Back</button>
 </div>
 
 <script>
 let token = localStorage.getItem('token') || '';
-let current = null;
+let current = null;      // generic activity state
+let chat = null;         // { sessionId, startedAt, budget }
+let chatTick = null;
 const $ = id => document.getElementById(id);
 const show = id => {
-  for (const s of ['auth','onboarding','dashboard','activity','summary'])
+  for (const s of ['auth','onboarding','dashboard','activity','chat','summary'])
     $(s).classList.toggle('hidden', s !== id);
 };
 const api = async (path, opts = {}) => {
@@ -87,6 +121,7 @@ const api = async (path, opts = {}) => {
   if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
   return res.json();
 };
+
 async function doAuth(kind) {
   try {
     const r = await api('/api/' + kind, { method: 'POST', body: JSON.stringify({
@@ -96,6 +131,7 @@ async function doAuth(kind) {
     catch { show('onboarding'); }
   } catch (e) { alert(e.message); }
 }
+
 async function onboard() {
   await api('/api/onboarding', { method: 'POST', body: JSON.stringify({
     goal: $('goal').value, level: $('level').value,
@@ -103,8 +139,11 @@ async function onboard() {
     weekly_minutes: +$('weekly').value, motivation: $('motivation').value })});
   show('dashboard');
 }
+
 async function recommend(mins) {
   const r = await api('/api/recommendation?minutes=' + mins);
+  if (r.recommendation.activity_type === 'conversation')
+    return startConversation(mins, r.recommendation.explanation);
   current = r;
   $('act-title').textContent = r.experience.title +
     ' · ' + r.recommendation.estimated_minutes + ' min';
@@ -112,6 +151,7 @@ async function recommend(mins) {
   $('act-content').textContent = r.experience.content;
   show('activity');
 }
+
 async function finish() {
   const rec = current.recommendation;
   const concepts = rec.concepts.length ? rec.concepts
@@ -121,9 +161,105 @@ async function finish() {
     mistakes: $('mistakes').value.split(',').map(s => s.trim()).filter(Boolean),
     confidence: (+$('conf').value) / 10, difficulty: rec.difficulty,
     duration_seconds: rec.estimated_minutes * 60, engaged: true })});
-  $('summary-body').textContent = JSON.stringify(r, null, 2);
+  showSummary(r, null);
+}
+
+/* ---------------- conversation ---------------- */
+
+// TRANSPORT LAYER — the single seam a voice mode plugs into.
+async function sendToKai(text) {
+  const r = await api(`/api/conversation/${chat.sessionId}/message`, {
+    method: 'POST', body: JSON.stringify({ content: text }) });
+  return r.reply;
+}
+
+// RENDER LAYER — a voice mode adds TTS here (speak when role === 'teacher').
+function renderMessage(role, text, pending = false) {
+  const el = document.createElement('div');
+  el.className = 'bubble ' + role + (pending ? ' pending' : '');
+  el.textContent = text;
+  $('chat-messages').appendChild(el);
+  $('chat-messages').scrollTop = $('chat-messages').scrollHeight;
+  return el;
+}
+
+async function startConversation(mins, why) {
+  const r = await api('/api/conversation/start', {
+    method: 'POST', body: JSON.stringify({ minutes: mins }) });
+  chat = { sessionId: r.session_id, startedAt: Date.now(), budget: r.minutes };
+  $('chat-messages').innerHTML = '';
+  $('chat-why').textContent = why || r.explanation;
+  renderMessage('teacher', r.opener);
+  clearInterval(chatTick);
+  chatTick = setInterval(() => {
+    const mins = (Date.now() - chat.startedAt) / 60000;
+    $('chat-timer').textContent = mins.toFixed(1) + ' / ' + chat.budget + ' min';
+  }, 5000);
+  $('chat-timer').textContent = '0.0 / ' + chat.budget + ' min';
+  show('chat');
+  $('chat-input').focus();
+}
+
+async function submitChat(event) {
+  event.preventDefault();
+  const text = $('chat-input').value.trim();
+  if (!text || !chat) return false;
+  $('chat-input').value = '';
+  renderMessage('learner', text);
+  const pending = renderMessage('teacher', '…', true);
+  $('chat-send').disabled = true;
+  try {
+    const reply = await sendToKai(text);
+    pending.textContent = reply;
+    pending.classList.remove('pending');
+  } catch (e) {
+    pending.remove();
+    alert(e.message);
+  } finally {
+    $('chat-send').disabled = false;
+    $('chat-input').focus();
+  }
+  return false;
+}
+
+async function endChat() {
+  if (!chat) return;
+  $('chat-end').disabled = true;
+  try {
+    const r = await api(`/api/conversation/${chat.sessionId}/end`, { method: 'POST' });
+    clearInterval(chatTick);
+    chat = null;
+    showSummary(r.summary, r.next_recommendation);
+  } catch (e) { alert(e.message); }
+  finally { $('chat-end').disabled = false; }
+}
+
+/* ---------------- summary ---------------- */
+
+function showSummary(summary, nextRec) {
+  const lines = [];
+  if (summary.teacher_notes) lines.push(`<p><em>${esc(summary.teacher_notes)}</em></p>`);
+  lines.push(`<p><strong>Practiced:</strong> ${
+    (summary.concepts_practiced || []).map(esc).join(', ') || '—'}</p>`);
+  lines.push(`<p><strong>Mistakes:</strong> ${
+    (summary.mistakes || []).map(esc).join(', ') || 'none spotted'}</p>`);
+  if (summary.estimated_mastery != null)
+    lines.push(`<p><strong>Estimated mastery:</strong> ${
+      Math.round(summary.estimated_mastery * 100)}%</p>`);
+  if (summary.recommended_review_at)
+    lines.push(`<p><strong>Review due:</strong> ${
+      new Date(summary.recommended_review_at * 1000).toLocaleString()}</p>`);
+  $('summary-body').innerHTML = lines.join('');
+  if (nextRec) {
+    $('next-rec').innerHTML = `<p>Up next: <strong>${esc(nextRec.activity_type)}</strong>
+      — ${esc(nextRec.explanation)}</p>`;
+  }
   show('summary');
 }
+
+const esc = s => String(s).replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
 (async () => {
   if (!token) return show('auth');
   try { await api('/api/me'); show('dashboard'); }

@@ -48,6 +48,22 @@ def init_db() -> None:
                 weekly_minutes INTEGER NOT NULL,
                 motivation TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS conversation_sessions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id),
+                started_at REAL NOT NULL,
+                ended_at REAL,
+                minutes REAL NOT NULL,
+                recommendation TEXT NOT NULL     -- JSON snapshot of the rec that opened it
+            );
+            CREATE TABLE IF NOT EXISTS session_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL REFERENCES conversation_sessions(id),
+                user_id TEXT NOT NULL REFERENCES users(id),
+                role TEXT NOT NULL,              -- 'learner' | 'teacher'
+                content TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS session_summaries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL REFERENCES users(id),

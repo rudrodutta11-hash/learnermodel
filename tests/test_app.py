@@ -9,12 +9,12 @@ from fastapi.testclient import TestClient
 def client(tmp_path, monkeypatch):
     monkeypatch.setenv("LEARNER_DATA_DIR", str(tmp_path))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    # Re-import with the patched data dir
+    # Re-import with the patched data dir (order matters: db → state →
+    # conversation → main, following the import graph)
     import importlib
-    from app import db
-    importlib.reload(db)
-    from app import main
-    importlib.reload(main)
+    from app import conversation, db, main, state
+    for module in (db, state, conversation, main):
+        importlib.reload(module)
     with TestClient(main.app) as c:
         yield c
 
@@ -46,7 +46,11 @@ def test_full_learning_loop(client):
     }
     assert rec["estimated_minutes"] <= 5
     assert rec["explanation"]
-    assert body["experience"]["content"]  # teacher generated something
+    if rec["activity_type"] == "conversation":
+        # Interactive: content comes live from /api/conversation/start
+        assert body["experience"]["interaction"] == "chat"
+    else:
+        assert body["experience"]["content"]  # teacher generated something
 
     # Session summary feeds the learner model
     r = client.post("/api/session-summary", headers=headers, json={
@@ -67,8 +71,69 @@ def test_full_learning_loop(client):
     assert r.json()["learner"]["memory"]["items_tracked"] == 2
 
 
+def test_conversation_loop(client):
+    """Open app → 5 minutes → talk with Kai → end → model updated → next rec."""
+    headers = auth_headers(client)
+    client.post("/api/onboarding", headers=headers, json={
+        "goal": "Learn Spanish", "level": "beginner",
+        "interests": ["travel"], "weekly_minutes": 90, "motivation": "trip",
+    })
+
+    # Start: Kai opens the conversation around engine-chosen concepts
+    r = client.post("/api/conversation/start", headers=headers, json={"minutes": 5})
+    assert r.status_code == 200, r.text
+    start = r.json()
+    session_id = start["session_id"]
+    assert start["opener"]
+    assert start["explanation"]
+
+    # Two learner turns; Kai replies to each and every message is persisted
+    for text in ["Hola! Me llamo Sam.", "Yo quiero aprender los saludos."]:
+        r = client.post(f"/api/conversation/{session_id}/message",
+                        headers=headers, json={"content": text})
+        assert r.status_code == 200, r.text
+        assert r.json()["reply"]
+
+    from app import db
+    with db.connect() as conn:
+        n = conn.execute("SELECT COUNT(*) FROM session_events WHERE session_id = ?",
+                         (session_id,)).fetchone()[0]
+    assert n == 5  # opener + 2 × (learner + teacher)
+
+    # End: assessment feeds the learner model, and we get the next rec
+    r = client.post(f"/api/conversation/{session_id}/end", headers=headers)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    summary = body["summary"]
+    assert summary["concepts_practiced"]
+    assert summary["estimated_mastery"] is not None
+    assert summary["recommended_review_at"] is not None
+    assert summary["learner_summary"]["events_observed"] > 0
+    next_rec = body["next_recommendation"]
+    assert next_rec["activity_type"] and next_rec["explanation"]
+
+    # The session is closed: further messages and double-end are rejected
+    r = client.post(f"/api/conversation/{session_id}/message",
+                    headers=headers, json={"content": "hola?"})
+    assert r.status_code == 409
+    assert client.post(f"/api/conversation/{session_id}/end",
+                       headers=headers).status_code == 409
+
+
+def test_conversation_requires_own_session(client):
+    headers = auth_headers(client)
+    client.post("/api/onboarding", headers=headers, json={
+        "goal": "Spanish", "level": "beginner",
+    })
+    r = client.post("/api/conversation/nope/message", headers=headers,
+                    json={"content": "hi"})
+    assert r.status_code == 404
+
+
 def test_auth_required(client):
     assert client.get("/api/recommendation", params={"minutes": 5}).status_code == 401
+    assert client.post("/api/conversation/start",
+                       json={"minutes": 5}).status_code == 401
 
 
 def test_bad_login(client):

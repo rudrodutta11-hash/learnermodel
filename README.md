@@ -15,7 +15,13 @@ traditional course.
 - `experience/` — pluggable delivery formats (mini lesson, flashcards,
   quiz, writing, conversation, story), all voiced by one AI teacher
 - `app/` — FastAPI MVP: auth, onboarding, the "how much time do you have?"
-  dashboard, one recommendation, session summaries, the AI teacher (Kai)
+  dashboard, one recommendation, session summaries, the AI teacher (Kai),
+  and the live conversation experience (`/api/conversation/*`): chat with
+  Kai, every message logged to `session_events`, and on end Kai assesses
+  the transcript to update the learner model. The chat transport is a
+  single seam (`sendToKai`/`renderMessage` in the UI, plain role+content
+  events in the API) so voice (STT/TTS or a call bridge) plugs in later
+  without touching session, event, or summary logic.
 - `tests/` — model, engine, and API tests
 - `demo.py` — offline simulation showing the model learning a learner and
   transferring across subjects
