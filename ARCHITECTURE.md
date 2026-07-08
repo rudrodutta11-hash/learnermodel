@@ -67,15 +67,28 @@ permanent and universal.
 Knowledge State is a *view* computed over the memory model + concept
 graph. It holds no state of its own that can drift.
 
-## 3. Session History (`learner_model/history.py`)
+## 3. Session History (`learner_model/history.py` + `app/events.py`)
 
-Append-only log of every learning interaction (`InteractionEvent`):
-mistakes, activity used, duration, completion, confidence, correctness.
+Two append-only logs at different altitudes, both INSERT-only:
 
-**This is the system of record.** Profile and Knowledge State are derived
-state — improve the models later and replay history to rebuild every
-profile with the better math (`history.replay_into(profile)`). Never
-mutate, never delete.
+- **`learner_model/history.py`** — the math-facing log: one `InteractionEvent`
+  per concept per activity (mistakes, activity used, duration, completion,
+  confidence, correctness). This is what `profile.update()` consumes, and
+  `history.replay_into(profile)` rebuilds a profile from scratch — improve
+  the models later and every profile gets smarter retroactively.
+- **`app/events.py`** — the product-facing log: every observable step of a
+  learner's interaction, typed and timestamped:
+
+  `recommendation_created → activity_started → user_message* / teacher_message*
+  → mistake_detected* → activity_completed → session_summarized →
+  learner_profile_updated`
+
+  This is the full audit trail — richer than what today's models use (raw
+  chat content, every recommendation the engine ever produced, every
+  mistake as it was detected). `events.replay(user_id)` reads it back in
+  order; a future model version can mine it for signal the current models
+  don't yet extract, the same way `InteractionEvent` history lets the core
+  math be rebuilt. Neither log has an update or delete path — anywhere.
 
 ## 4. Recommendation Engine (`recommendation/engine.py`)
 

@@ -160,7 +160,8 @@ async function finish() {
     activity_type: rec.activity_type, concepts,
     mistakes: $('mistakes').value.split(',').map(s => s.trim()).filter(Boolean),
     confidence: (+$('conf').value) / 10, difficulty: rec.difficulty,
-    duration_seconds: rec.estimated_minutes * 60, engaged: true })});
+    duration_seconds: rec.estimated_minutes * 60, engaged: true,
+    session_id: current.session_id })});
   showSummary(r, null);
 }
 

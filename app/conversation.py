@@ -11,8 +11,9 @@ Every exchange is a plain (role, content) event — no channel assumptions.
 Adding voice later means putting STT in front of `/message` and TTS behind
 it (or a telephony bridge doing both); the session lifecycle, event log,
 assessment, and learner-model updates all stay exactly as they are. The
-full transcript already lands in `session_events`, so a voice call and a
-text chat produce identical records downstream.
+full transcript already lands in the append-only `events` log (as
+`user_message`/`teacher_message` events), so a voice call and a text chat
+produce identical records downstream.
 """
 from __future__ import annotations
 
@@ -26,6 +27,8 @@ from learner_model import new_session_id
 from recommendation import SessionContext
 
 from . import db, state
+from . import events as events_log
+from .events import EventType
 
 router = APIRouter(prefix="/api/conversation")
 
@@ -58,23 +61,22 @@ def _session(session_id: str, user_id: str) -> dict:
     return dict(row)
 
 
-def _events(session_id: str) -> list[dict]:
-    with db.connect() as conn:
-        rows = conn.execute(
-            "SELECT role, content, created_at FROM session_events "
-            "WHERE session_id = ? ORDER BY id",
-            (session_id,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+def _transcript(session_id: str, user_id: str) -> list[dict]:
+    """The conversation so far as {"role": "learner"|"teacher", "content"}
+    turns, read straight from the append-only event log."""
+    role_by_event_type = {
+        EventType.USER_MESSAGE.value: "learner",
+        EventType.TEACHER_MESSAGE.value: "teacher",
+    }
+    return [
+        {"role": role_by_event_type[e["event_type"]], "content": e["payload"]["content"]}
+        for e in events_log.messages(user_id, session_id)
+    ]
 
 
-def _append_event(session_id: str, user_id: str, role: str, content: str) -> None:
-    with db.connect() as conn:
-        conn.execute(
-            "INSERT INTO session_events (session_id, user_id, role, content, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
-            (session_id, user_id, role, content, time.time()),
-        )
+def _log_turn(session_id: str, user_id: str, role: str, content: str) -> None:
+    event_type = EventType.TEACHER_MESSAGE if role == "teacher" else EventType.USER_MESSAGE
+    events_log.log(user_id, event_type, {"content": content}, session_id=session_id)
 
 
 def _teacher_context(session: dict, user_id: str) -> dict:
@@ -89,12 +91,12 @@ def _teacher_context(session: dict, user_id: str) -> dict:
     }
 
 
-def _as_chat_messages(events: list[dict]) -> list[dict]:
-    """session_events → Messages-API shape (teacher speaks as assistant)."""
+def _as_chat_messages(transcript: list[dict]) -> list[dict]:
+    """Transcript turns → Messages-API shape (teacher speaks as assistant)."""
     return [
-        {"role": "assistant" if e["role"] == "teacher" else "user",
-         "content": e["content"]}
-        for e in events
+        {"role": "assistant" if t["role"] == "teacher" else "user",
+         "content": t["content"]}
+        for t in transcript
     ]
 
 
@@ -128,6 +130,15 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
             (session_id, user_id, time.time(), req.minutes, json.dumps(rec_snapshot)),
         )
 
+    events_log.log(user_id, EventType.RECOMMENDATION_CREATED, {
+        "activity_type": "conversation", "difficulty": rec.difficulty,
+        "concepts": rec_snapshot["concepts"], "need": rec.need,
+        "explanation": rec.explanation, "estimated_minutes": req.minutes,
+    }, session_id=session_id)
+    events_log.log(user_id, EventType.ACTIVITY_STARTED, {
+        "activity_type": "conversation", "minutes": req.minutes,
+    }, session_id=session_id)
+
     context = {
         "goal": ob["goal"], "concepts": rec_snapshot["concepts"],
         "difficulty": rec.difficulty, "minutes": req.minutes,
@@ -137,7 +148,7 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
         [{"role": "user", "content": OPENER_CUE.format(minutes=req.minutes)}],
         context,
     )
-    _append_event(session_id, user_id, "teacher", opener)
+    _log_turn(session_id, user_id, "teacher", opener)
 
     return {
         "session_id": session_id,
@@ -155,7 +166,7 @@ def message(session_id: str, req: MessageRequest,
     if session["ended_at"] is not None:
         raise HTTPException(status_code=409, detail="Conversation already ended")
 
-    _append_event(session_id, user_id, "learner", req.content)
+    _log_turn(session_id, user_id, "learner", req.content)
 
     context = _teacher_context(session, user_id)
     elapsed_min = (time.time() - session["started_at"]) / 60.0
@@ -165,8 +176,8 @@ def message(session_id: str, req: MessageRequest,
             "message or two and suggest ending here."
         )
 
-    reply = state.teacher.chat(_as_chat_messages(_events(session_id)), context)
-    _append_event(session_id, user_id, "teacher", reply)
+    reply = state.teacher.chat(_as_chat_messages(_transcript(session_id, user_id)), context)
+    _log_turn(session_id, user_id, "teacher", reply)
 
     return {
         "reply": reply,
@@ -188,11 +199,21 @@ def end(session_id: str, user_id: str = Depends(state.current_user)):
             (now, session_id),
         )
 
-    events = _events(session_id)
+    transcript = _transcript(session_id, user_id)
     context = _teacher_context(session, user_id)
-    assessment = state.teacher.assess(events, context)
+    assessment = state.teacher.assess(transcript, context)
 
-    learner_turns = sum(1 for e in events if e["role"] == "learner")
+    # Conversation mistakes are free-form signatures Kai identified from the
+    # transcript (not necessarily concept ids), so log them explicitly here
+    # with that context — apply_session_results below separately logs a
+    # mistake_detected event for any entry that DOES match a concept id.
+    for signature in assessment["mistakes"]:
+        events_log.log(user_id, EventType.MISTAKE_DETECTED, {
+            "signature": signature, "concepts": assessment["concepts"],
+            "source": "conversation_assessment",
+        }, session_id=session_id)
+
+    learner_turns = sum(1 for t in transcript if t["role"] == "learner")
     summary = state.apply_session_results(
         user_id,
         activity_type="conversation",
@@ -202,6 +223,7 @@ def end(session_id: str, user_id: str = Depends(state.current_user)):
         duration_seconds=now - session["started_at"],
         difficulty=json.loads(session["recommendation"])["difficulty"],
         engaged=learner_turns > 0,  # a session with no learner turns = bounce
+        session_id=session_id,
     )
     summary["teacher_notes"] = assessment.get("notes", "")
 

@@ -94,11 +94,22 @@ def test_conversation_loop(client):
         assert r.status_code == 200, r.text
         assert r.json()["reply"]
 
-    from app import db
-    with db.connect() as conn:
-        n = conn.execute("SELECT COUNT(*) FROM session_events WHERE session_id = ?",
-                         (session_id,)).fetchone()[0]
-    assert n == 5  # opener + 2 × (learner + teacher)
+    user_id = _user_id(client, headers)
+    from app import events as events_log
+
+    # Every message is an immutable event: opener + 2 × (learner + teacher)
+    logged = events_log.replay(user_id, session_id)
+    turn_events = [e for e in logged
+                  if e["event_type"] in ("user_message", "teacher_message")]
+    assert len(turn_events) == 5
+    assert turn_events[0]["event_type"] == "teacher_message"  # opener first
+
+    # recommendation_created and activity_started were logged at start()
+    assert {e["event_type"] for e in logged} >= {
+        "recommendation_created", "activity_started",
+        "user_message", "teacher_message",
+    }
+    before_end_count = len(logged)
 
     # End: assessment feeds the learner model, and we get the next rec
     r = client.post(f"/api/conversation/{session_id}/end", headers=headers)
@@ -112,12 +123,71 @@ def test_conversation_loop(client):
     next_rec = body["next_recommendation"]
     assert next_rec["activity_type"] and next_rec["explanation"]
 
+    # End appended events — it never rewrote what was already there.
+    after_end = events_log.replay(user_id, session_id)
+    assert after_end[:before_end_count] == logged  # untouched prefix
+    assert len(after_end) > before_end_count
+
+    # mistake_detected isn't guaranteed here: the mock teacher's assess()
+    # fallback reports zero mistakes for a scripted transcript. The other
+    # three lifecycle events always fire on completion.
+    new_types = {e["event_type"] for e in after_end[before_end_count:]}
+    assert new_types >= {
+        "activity_completed", "session_summarized", "learner_profile_updated",
+    }
+
     # The session is closed: further messages and double-end are rejected
     r = client.post(f"/api/conversation/{session_id}/message",
                     headers=headers, json={"content": "hola?"})
     assert r.status_code == 409
     assert client.post(f"/api/conversation/{session_id}/end",
                        headers=headers).status_code == 409
+
+
+def _user_id(client, headers) -> str:
+    token = headers["Authorization"].removeprefix("Bearer ")
+    from app import auth
+    return auth.user_id_for_token(token)
+
+
+def test_event_log_covers_non_conversation_activities(client):
+    """recommendation_created / activity_started / mistake_detected /
+    activity_completed / session_summarized / learner_profile_updated all
+    fire for the non-interactive activity path too, and GET /api/events
+    replays them in stable, append-only order."""
+    headers = auth_headers(client)
+    client.post("/api/onboarding", headers=headers, json={
+        "goal": "Learn Spanish", "level": "beginner",
+    })
+    r = client.get("/api/recommendation", headers=headers, params={"minutes": 5})
+    rec_body = r.json()
+    session_id = rec_body["session_id"]
+    activity_type = rec_body["recommendation"]["activity_type"]
+    if activity_type == "conversation":
+        pytest.skip("engine chose the conversation experience for this run")
+
+    client.post("/api/session-summary", headers=headers, json={
+        "activity_type": activity_type,
+        "concepts": ["greetings"],
+        "mistakes": ["greetings"],
+        "confidence": 0.5,
+        "duration_seconds": 120,
+        "difficulty": 0.4,
+        "session_id": session_id,
+    })
+
+    r = client.get("/api/events", headers=headers, params={"session_id": session_id})
+    assert r.status_code == 200
+    events = r.json()["events"]
+    types = {e["event_type"] for e in events}
+    assert types == {
+        "recommendation_created", "activity_started", "mistake_detected",
+        "activity_completed", "session_summarized", "learner_profile_updated",
+    }
+    # Events are strictly ordered by id (insertion order) and never mutate.
+    assert [e["id"] for e in events] == sorted(e["id"] for e in events)
+    r2 = client.get("/api/events", headers=headers, params={"session_id": session_id})
+    assert r2.json()["events"] == events
 
 
 def test_conversation_requires_own_session(client):

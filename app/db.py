@@ -56,14 +56,22 @@ def init_db() -> None:
                 minutes REAL NOT NULL,
                 recommendation TEXT NOT NULL     -- JSON snapshot of the rec that opened it
             );
-            CREATE TABLE IF NOT EXISTS session_events (
+            -- Append-only interaction event log. INSERT only — this table
+            -- has no UPDATE or DELETE path anywhere in the app. Every
+            -- learner interaction (recommendation, activity lifecycle,
+            -- chat turns, mistakes, summaries, profile updates) lands
+            -- here as an immutable record so future model versions can
+            -- replay the full history. See app/events.py.
+            CREATE TABLE IF NOT EXISTS events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL REFERENCES conversation_sessions(id),
                 user_id TEXT NOT NULL REFERENCES users(id),
-                role TEXT NOT NULL,              -- 'learner' | 'teacher'
-                content TEXT NOT NULL,
+                session_id TEXT,
+                event_type TEXT NOT NULL,
+                payload TEXT NOT NULL,           -- JSON, immutable once written
                 created_at REAL NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS idx_events_user ON events(user_id, id);
+            CREATE INDEX IF NOT EXISTS idx_events_session ON events(session_id, id);
             CREATE TABLE IF NOT EXISTS session_summaries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id TEXT NOT NULL REFERENCES users(id),

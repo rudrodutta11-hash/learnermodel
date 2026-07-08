@@ -25,6 +25,8 @@ from learner_model.store import save_profile
 from recommendation import SessionContext
 
 from . import auth, conversation, db, state
+from .events import EventType
+from . import events as events_log
 
 STATIC_DIR = Path(__file__).parent / "static"
 
@@ -62,6 +64,7 @@ class SessionSummary(BaseModel):
     engaged: bool = True
     duration_seconds: float = 0.0
     difficulty: float = 0.5
+    session_id: str | None = None       # correlates back to /api/recommendation
 
 
 # -- routes -------------------------------------------------------------------
@@ -109,6 +112,7 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
         subject=state.SUBJECT, available_minutes=minutes, goal=onboarding["goal"]
     )
     rec = state.engine.recommend(profile, knowledge, context)
+    session_id = new_session_id()
 
     payload = {
         "recommendation": {
@@ -119,15 +123,23 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
             "expected_outcome": rec.expected_outcome,
             "estimated_minutes": rec.estimated_minutes,
         },
-        "session_id": new_session_id(),
+        "session_id": session_id,
     }
 
     # Conversations are interactive: the client starts a live session via
-    # /api/conversation/start instead of receiving pre-built content.
+    # /api/conversation/start, which logs its own recommendation_created /
+    # activity_started against a session_id that persists through /end —
+    # so this preview intentionally doesn't log those events.
     if rec.activity_type.value == "conversation":
         payload["experience"] = {"title": "Conversation", "interaction": "chat",
                                  "content": ""}
         return payload
+
+    events_log.log(user_id, EventType.RECOMMENDATION_CREATED, {
+        "activity_type": rec.activity_type.value, "difficulty": rec.difficulty,
+        "concepts": list(rec.concepts), "need": rec.need,
+        "explanation": rec.explanation, "estimated_minutes": rec.estimated_minutes,
+    }, session_id=session_id)
 
     experience = get_experience(rec.activity_type)
     plan = experience.build(rec, profile, state.teacher, goal=onboarding["goal"])
@@ -136,6 +148,13 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
         "content": plan.content,
         "interaction": plan.interaction,
     }
+
+    # Content is delivered immediately in this MVP (no separate "user
+    # clicked start" step for non-interactive formats).
+    events_log.log(user_id, EventType.ACTIVITY_STARTED, {
+        "activity_type": rec.activity_type.value,
+    }, session_id=session_id)
+
     return payload
 
 
@@ -151,7 +170,15 @@ def session_summary(data: SessionSummary, user_id: str = Depends(state.current_u
         duration_seconds=data.duration_seconds,
         difficulty=data.difficulty,
         engaged=data.engaged,
+        session_id=data.session_id,
     )
+
+
+@app.get("/api/events")
+def event_log(session_id: str | None = None, user_id: str = Depends(state.current_user)):
+    """The learner's full append-only event trail — the replay surface
+    future model versions read from. Never mutated, only ever grown."""
+    return {"events": events_log.replay(user_id, session_id)}
 
 
 @app.get("/api/me")

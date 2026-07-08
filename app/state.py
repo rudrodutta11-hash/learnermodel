@@ -19,6 +19,8 @@ from learner_model.store import load_profile as _load, save_profile
 from recommendation import RecommendationEngine, SessionContext
 
 from . import auth, db
+from . import events as events_log
+from .events import EventType
 from .teacher import make_teacher
 
 SUBJECT = "primary"  # MVP: one subject track per learner; the model is already multi-subject
@@ -100,14 +102,15 @@ def apply_session_results(
     duration_seconds: float,
     difficulty: float,
     engaged: bool = True,
+    session_id: str | None = None,
 ) -> dict:
     """The single write path after ANY completed activity: feeds the
-    learner model, updates the knowledge state, records the summary, and
-    returns mastery + next review date."""
+    learner model, updates the knowledge state, records the summary, logs
+    the append-only event trail, and returns mastery + next review date."""
     profile = load_profile(user_id)
     ks = knowledge(user_id)
     history = SessionHistory(db.HISTORY_DIR)
-    session_id = new_session_id()
+    session_id = session_id or new_session_id()
     now = time.time()
     modality = Modality(activity_type)
     missed = set(mistakes)
@@ -135,6 +138,10 @@ def apply_session_results(
         )
         history.append(event)
         profile.update(event)
+        if concept_id in missed:
+            events_log.log(user_id, EventType.MISTAKE_DETECTED, {
+                "concept": concept_id, "activity_type": activity_type,
+            }, session_id=session_id)
 
     save_profile(profile, db.PROFILES_DIR)
     save_concepts(user_id, ks)
@@ -157,7 +164,20 @@ def apply_session_results(
              json.dumps(mistakes), confidence, mastery, review_due),
         )
 
+    events_log.log(user_id, EventType.ACTIVITY_COMPLETED, {
+        "activity_type": activity_type, "concepts": concepts,
+        "duration_seconds": duration_seconds, "engaged": engaged,
+    }, session_id=session_id)
+    events_log.log(user_id, EventType.SESSION_SUMMARIZED, {
+        "concepts_practiced": concepts, "mistakes": mistakes,
+        "confidence": confidence, "estimated_mastery": mastery,
+        "recommended_review_at": review_due,
+    }, session_id=session_id)
+    events_log.log(user_id, EventType.LEARNER_PROFILE_UPDATED, profile.summary(),
+                   session_id=session_id)
+
     return {
+        "session_id": session_id,
         "concepts_practiced": concepts,
         "mistakes": mistakes,
         "confidence": confidence,
