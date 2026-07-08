@@ -1,8 +1,9 @@
-"""The AI Teacher — the signature feature.
+"""The AI Teacher — Kai, the main character of this product.
 
-One consistent teacher per product, defined by a single persona prompt.
-Every experience type speaks through this object, so the learner always
-hears the same voice whether they're doing flashcards or a conversation.
+Kai's personality lives in app/persona.py; this module is the machinery
+that speaks with it. EVERY AI interaction — lesson generation, live
+conversation, session assessment — routes through the persona, so Kai is
+one consistent person whether he's writing flashcards or chatting.
 
 Voice-readiness: the Teacher separates WHAT is said (this class) from HOW
 it is delivered (the transport). Today the transport is text over HTTP;
@@ -13,6 +14,7 @@ adding a transport, not rewriting experiences.
 Backends, selected by the AI_MODE env var:
   - mock (default): ScriptedTeacher — deterministic, offline, zero cost.
     Use this for all day-to-day development so you never burn credits.
+    Even the mock speaks in Kai's voice and uses his session memory.
   - cheap: AnthropicTeacher on Haiku — cheapest real model, for testing
     actual AI output without premium spend.
   - premium: AnthropicTeacher on Opus — production-quality generation.
@@ -26,22 +28,7 @@ import json
 import os
 from typing import Any
 
-PERSONA = """\
-You are Kai, a personal AI teacher. You are the SAME teacher every session:
-warm, direct, endlessly curious about how your student learns best.
-
-Principles:
-- You teach one specific human, not an audience. Use what you know about
-  how they learn (provided as learner context) to shape every response.
-- Never overwhelm: respect the time budget you're given.
-- Adjust difficulty to keep success likely but not certain.
-- Celebrate genuine progress specifically; never with empty praise.
-- When the student errs, treat it as information, not failure.
-
-You will receive an instruction describing the learning experience to
-create, plus JSON context about the learner and their goal. Produce only
-the experience content — no meta-commentary about being an AI.
-"""
+from .persona import system_prompt
 
 MODELS_BY_MODE = {
     "cheap": "claude-haiku-4-5",
@@ -50,7 +37,7 @@ MODELS_BY_MODE = {
 
 
 class AnthropicTeacher:
-    """Claude-backed teacher."""
+    """Claude-backed Kai."""
 
     def __init__(self, model: str) -> None:
         import anthropic
@@ -59,46 +46,38 @@ class AnthropicTeacher:
         self._model = model
 
     def generate(self, instruction: str, context: dict[str, Any]) -> str:
+        """One-shot content in Kai's voice (lessons, decks, quizzes...)."""
         response = self._client.messages.create(
             model=self._model,
             max_tokens=2000,
-            system=PERSONA,
-            messages=[{
-                "role": "user",
-                "content": (
-                    f"Instruction: {instruction}\n\n"
-                    f"Context:\n{json.dumps(context, indent=2, default=str)}"
-                ),
-            }],
+            system=system_prompt(context),
+            messages=[{"role": "user", "content": instruction}],
         )
         return "".join(b.text for b in response.content if b.type == "text")
 
     def chat(self, messages: list[dict[str, str]], context: dict[str, Any]) -> str:
         """Multi-turn conversation — the surface a voice transport will drive."""
-        system = (
-            PERSONA
-            + "\nLearner context:\n"
-            + json.dumps(context, indent=2, default=str)
-        )
         response = self._client.messages.create(
             model=self._model,
             max_tokens=1000,
-            system=system,
+            system=system_prompt(context),
             messages=messages,
         )
         return "".join(b.text for b in response.content if b.type == "text")
 
     def assess(self, transcript: list[dict[str, str]], context: dict[str, Any]) -> dict:
-        """Grade a finished conversation into structured session results."""
+        """Grade a finished conversation into structured session results.
+        The grading is clinical JSON; only `notes` is Kai speaking."""
         planned = context.get("concepts") or []
         prompt = (
-            "The conversation below has ended. Assess the learner's session "
-            "and respond with ONLY a JSON object, no other text:\n"
+            "The session just ended. Step out of the conversation and write "
+            "your private teaching notes as ONLY a JSON object, no other text:\n"
             '{"concepts": ["<id of each concept actually practiced>"], '
             '"mistakes": ["<short-kebab-case signature of each recurring or '
-            'notable mistake>"], "confidence": <your 0..1 estimate of the '
-            "learner's confidence>, "
-            '"notes": "<one sentence for the learner>"}\n'
+            'notable mistake>"], "confidence": <your 0..1 read of the '
+            "student's confidence>, "
+            '"notes": "<one sentence TO the student, in your own voice — '
+            'specific, no empty praise>"}\n'
             f"Planned concepts were: {json.dumps(planned)} — reuse those ids "
             "where they apply; add kebab-case ids for anything else practiced.\n\n"
             "Transcript:\n"
@@ -112,25 +91,56 @@ class AnthropicTeacher:
 
 
 class ScriptedTeacher:
-    """Deterministic fallback: keeps the product runnable and testable
-    offline. Same interface, canned but context-aware content."""
+    """Deterministic offline Kai: keeps the product runnable and testable
+    with zero API cost. Same interface, same personality — canned lines
+    composed from the same memory the real Kai reads, so even the mock
+    references previous sessions when they exist."""
 
     def generate(self, instruction: str, context: dict[str, Any]) -> str:
-        concepts = context.get("concepts") or ["something new for your goal"]
+        concepts = [str(c) for c in context.get("concepts") or []]
         goal = context.get("goal", "your goal")
+        minutes = context.get("minutes", "a few")
+        focus = ", ".join(concepts) if concepts else "the next most useful thing"
+        opener = _memory_line(context)
         return (
-            f"[Kai] Let's spend {context.get('minutes', 'a few')} minutes on "
-            f"{', '.join(str(c) for c in concepts)} — chosen because it's the "
-            f"highest-impact step toward {goal} right now.\n\n"
-            f"({instruction})"
+            f"{opener}We've got {minutes} minutes — enough for {focus}. "
+            f"It's the highest-value step toward {goal} right now, so let's "
+            f"not waste it.\n\n({instruction})"
         )
 
     def chat(self, messages: list[dict[str, str]], context: dict[str, Any]) -> str:
         last = messages[-1]["content"] if messages else ""
-        return f"[Kai] Interesting — tell me more about: {last[:80]}"
+        if last.startswith("("):  # stage direction → session opener
+            concepts = [str(c) for c in context.get("concepts") or []]
+            focus = concepts[0] if concepts else "something new"
+            return (
+                f"{_memory_line(context)}Today I want to hear you use "
+                f"{focus} — not recite it, use it. So: tell me about your "
+                f"day, and work it in."
+            )
+        return (
+            f"Good — and notice what you just did there. Push it one step: "
+            f"say that again, but change one thing about it. "
+            f"(You said: {last[:60]})"
+        )
 
     def assess(self, transcript: list[dict[str, str]], context: dict[str, Any]) -> dict:
         return _fallback_assessment(context.get("concepts") or [])
+
+
+def _memory_line(context: dict[str, Any]) -> str:
+    """Kai's opening beat: grounded in real history, or an honest hello."""
+    memory = context.get("memory") or {}
+    if not memory.get("sessions_together"):
+        return "I'm Kai — I'll be your teacher from here on. "
+    last = memory.get("last_session") or {}
+    if last.get("mistakes"):
+        return (f"Back again — good. Last time {last['mistakes'][0]} "
+                f"gave you trouble, and I haven't forgotten. ")
+    if last.get("concepts"):
+        return (f"Good to see you. Let's find out how much of "
+                f"{last['concepts'][0]} survived since last time. ")
+    return "Good to see you back. "
 
 
 def _extract_json(text: str) -> dict | None:
@@ -165,7 +175,8 @@ def _fallback_assessment(planned: list) -> dict:
         "concepts": [str(c) for c in planned] or ["conversation-practice"],
         "mistakes": [],
         "confidence": 0.6,
-        "notes": "Session recorded. Keep the conversations coming!",
+        "notes": "Solid session — you showed up and did the work. "
+                 "Same time tomorrow and it starts compounding.",
     }
 
 

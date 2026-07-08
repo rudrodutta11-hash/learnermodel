@@ -74,6 +74,51 @@ def onboarding(user_id: str) -> dict:
     return dict(row)
 
 
+def relationship_memory(user_id: str) -> dict:
+    """What Kai remembers about this learner across sessions.
+
+    Everything here is pulled from real records (onboarding, session
+    summaries, the error model) so Kai's references to previous sessions
+    are grounded — he is explicitly told to never invent a memory, and
+    this is the only memory he gets.
+    """
+    ob = onboarding(user_id)
+    profile = load_profile(user_id)
+    now = time.time()
+
+    with db.connect() as conn:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM session_summaries WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()[0]
+        last_row = conn.execute(
+            "SELECT * FROM session_summaries WHERE user_id = ? "
+            "ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+
+    memory: dict = {
+        "sessions_together": total,
+        "level": ob["level"],
+        "motivation": ob["motivation"],
+        "interests": json.loads(ob["interests"]),
+        "days_since_last": None,
+        "last_session": None,
+        "recurring_mistakes": [
+            (r.signature, r.count)
+            for r in profile.errors.recurring(now, subject=SUBJECT)[:3]
+        ],
+    }
+    if last_row is not None:
+        memory["days_since_last"] = (now - last_row["created_at"]) / 86400.0
+        memory["last_session"] = {
+            "activity_type": last_row["activity_type"],
+            "concepts": json.loads(last_row["concepts"]),
+            "mistakes": json.loads(last_row["mistakes"]),
+        }
+    return memory
+
+
 def next_recommendation(user_id: str, minutes: float) -> dict:
     """A fresh recommendation reflecting everything learned so far."""
     profile = load_profile(user_id)

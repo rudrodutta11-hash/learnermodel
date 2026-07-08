@@ -26,7 +26,12 @@ traditional course.
   role+content events in the API) so voice (STT/TTS or a call bridge)
   plugs in later
   without touching session, event, or summary logic.
-- `tests/` — model, engine, and API tests
+- `app/persona.py` + `docs/kai.md` — Kai himself: the character bible
+  every AI interaction builds its prompt from, and the human-readable
+  companion with example conversations. Kai's session memory comes from
+  real records only (`state.relationship_memory`) — he never invents
+  history
+- `tests/` — model, engine, API, and persona tests
 - `demo.py` — offline simulation showing the model learning a learner and
   transferring across subjects
 

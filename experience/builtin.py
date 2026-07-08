@@ -16,7 +16,8 @@ from recommendation.engine import Recommendation
 from .base import ExperiencePlan, Teacher, register_experience
 
 
-def _context(rec: Recommendation, profile: LearnerProfile, goal: str) -> dict:
+def _context(rec: Recommendation, profile: LearnerProfile, goal: str,
+             memory: dict | None) -> dict:
     return {
         "goal": goal,
         "concepts": list(rec.concepts),
@@ -24,6 +25,7 @@ def _context(rec: Recommendation, profile: LearnerProfile, goal: str) -> dict:
         "minutes": rec.estimated_minutes,
         "need": rec.need,
         "learner": profile.summary(),
+        "memory": memory,   # session history Kai can reference naturally
     }
 
 
@@ -42,9 +44,10 @@ class _PromptedExperience:
         profile: LearnerProfile,
         teacher: Teacher,
         goal: str,
+        memory: dict | None = None,
     ) -> ExperiencePlan:
         content = teacher.generate(
-            self.instruction, _context(recommendation, profile, goal)
+            self.instruction, _context(recommendation, profile, goal, memory)
         )
         return ExperiencePlan(
             activity_type=self.activity_type,
@@ -57,15 +60,19 @@ class _PromptedExperience:
         )
 
 
+# Instructions are stage directions to Kai — his persona and his notes on
+# this student (including past sessions) are already in the system prompt.
+
 register_experience(_PromptedExperience(
     activity_type=Modality.MINI_LESSON,
     title="Mini lesson",
     interaction="read-then-answer",
     instruction=(
-        "Teach a focused mini lesson on the given concepts (or, if none are "
-        "given, choose the single most useful next thing for the learner's "
-        "goal). Explain briefly, give 2-3 vivid examples, and end with one "
-        "check-for-understanding question."
+        "Teach today's mini lesson. Open with one line in your voice — if "
+        "your notes give you a real thread from a past session, pick it up. "
+        "Explain the idea the way you'd explain it across a table, give 2-3 "
+        "examples drawn from their interests where you can, and end with "
+        "exactly one check question that makes them produce, not recognize."
     ),
 ))
 
@@ -74,9 +81,10 @@ register_experience(_PromptedExperience(
     title="Flashcards",
     interaction="answer",
     instruction=(
-        "Create a short flashcard deck for the given concepts at the given "
-        "difficulty. One line per card, 'front | back'. Order from easiest "
-        "to hardest."
+        "Build today's flashcard deck. One line of framing from you first — "
+        "why THESE cards today (a fading memory, a recurring mistake — say "
+        "which, plainly). Then the cards, one per line, 'front | back', "
+        "easiest to hardest, ending one notch past comfortable."
     ),
 ))
 
@@ -85,9 +93,10 @@ register_experience(_PromptedExperience(
     title="Quick quiz",
     interaction="answer",
     instruction=(
-        "Write a short quiz targeting the given concepts, especially any "
-        "recurring mistakes. Mix recall and application. Number the "
-        "questions; do not reveal answers."
+        "Set today's quiz. One line of framing in your voice — if this "
+        "targets a mistake they keep making, name it like a teacher would, "
+        "not an app. Then numbered questions mixing recall and application, "
+        "climbing in difficulty. No answers; they earn those."
     ),
 ))
 
@@ -96,9 +105,10 @@ register_experience(_PromptedExperience(
     title="Writing exercise",
     interaction="write",
     instruction=(
-        "Design one short writing exercise that forces the learner to use "
-        "the given concepts correctly. State the task and a worked example "
-        "of the expected quality."
+        "Set one short writing task that forces today's concepts into use. "
+        "Brief the task the way you'd say it aloud, connect it to their "
+        "actual life or interests if your notes allow, and show one worked "
+        "example at the quality bar you expect — then get out of the way."
     ),
 ))
 
@@ -107,9 +117,10 @@ register_experience(_PromptedExperience(
     title="Conversation",
     interaction="chat",
     instruction=(
-        "Open a conversation that naturally exercises the given concepts. "
-        "Start with a warm, one-paragraph opener and a question that pulls "
-        "the learner in. Stay in character as their personal teacher."
+        "Open today's conversation. If you have history together, pick up "
+        "the thread naturally; if not, introduce yourself the way you do. "
+        "One warm beat, then one question that makes them use today's "
+        "concepts to answer it."
     ),
 ))
 
@@ -118,8 +129,9 @@ register_experience(_PromptedExperience(
     title="Story",
     interaction="read-then-answer",
     instruction=(
-        "Tell a short, engaging story that embeds the given concepts so the "
-        "learner absorbs them in context. End with two questions about the "
-        "concepts as they appeared in the story."
+        "Tell a short story that smuggles today's concepts in so they're "
+        "absorbed in context — set it somewhere their interests live if you "
+        "can. Your dry humor is welcome here. End with two questions about "
+        "the concepts as they appeared in the story, one easy, one stretch."
     ),
 ))

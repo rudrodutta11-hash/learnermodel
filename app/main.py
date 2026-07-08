@@ -142,7 +142,8 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
     }, session_id=session_id)
 
     experience = get_experience(rec.activity_type)
-    plan = experience.build(rec, profile, state.teacher, goal=onboarding["goal"])
+    plan = experience.build(rec, profile, state.teacher, goal=onboarding["goal"],
+                            memory=state.relationship_memory(user_id))
     payload["experience"] = {
         "title": plan.title,
         "content": plan.content,

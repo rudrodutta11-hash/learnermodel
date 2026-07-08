@@ -33,9 +33,12 @@ from .events import EventType
 router = APIRouter(prefix="/api/conversation")
 
 OPENER_CUE = (
-    "(The learner has just arrived for a {minutes:.0f}-minute conversation. "
-    "Open it now: greet them briefly as their teacher and pull them into "
-    "practicing the target concepts with an engaging first question.)"
+    "(Your student just sat down for a {minutes:.0f}-minute conversation. "
+    "Open the session: if your notes show real history together, pick up "
+    "the thread the way a tutor would — reference something specific you "
+    "actually worked on; if this is your first session, introduce yourself "
+    "briefly and honestly. Then one warm beat, and one question that pulls "
+    "them into today's concepts. No preamble about being ready to help.)"
 )
 WRAP_UP_GRACE = 1.5  # let a session run 50% over before Kai starts wrapping up
 
@@ -88,6 +91,9 @@ def _teacher_context(session: dict, user_id: str) -> dict:
         "difficulty": rec["difficulty"],
         "minutes": session["minutes"],
         "learner": profile.summary(),
+        # Frozen at session start: what Kai remembered walking in stays
+        # consistent for the whole conversation.
+        "memory": rec.get("memory"),
     }
 
 
@@ -113,12 +119,15 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
     ))
     # The engine chose WHAT (concepts, difficulty, why); this experience
     # delivers it conversationally regardless of which format it scored best.
+    # Kai's memory of the relationship is snapshotted here so it stays
+    # consistent for the whole session.
     rec_snapshot = {
         "goal": ob["goal"],
         "concepts": list(rec.concepts),
         "difficulty": rec.difficulty,
         "need": rec.need,
         "explanation": rec.explanation,
+        "memory": state.relationship_memory(user_id),
     }
 
     session_id = new_session_id()
@@ -143,6 +152,7 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
         "goal": ob["goal"], "concepts": rec_snapshot["concepts"],
         "difficulty": rec.difficulty, "minutes": req.minutes,
         "learner": profile.summary(),
+        "memory": rec_snapshot["memory"],
     }
     opener = state.teacher.chat(
         [{"role": "user", "content": OPENER_CUE.format(minutes=req.minutes)}],

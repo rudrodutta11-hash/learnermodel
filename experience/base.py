@@ -50,6 +50,7 @@ class Experience(Protocol):
         profile: LearnerProfile,
         teacher: Teacher,
         goal: str,
+        memory: dict[str, Any] | None = None,
     ) -> ExperiencePlan: ...
 
 
