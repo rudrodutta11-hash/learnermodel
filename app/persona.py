@@ -189,6 +189,59 @@ def student_brief(context: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def scene_brief(scene: dict[str, Any]) -> str:
+    """Render tonight's story scene as direction for Kai.
+
+    Kai stays the teacher, but for this session he also runs the scene —
+    voicing the character, keeping continuity. The learning target lives in
+    the student notes above; here Kai learns WHO the learner is meeting and
+    what's happened between them so far, so the practice hides inside a
+    story the learner is invested in.
+    """
+    char = scene.get("character") or {}
+    name = char.get("name", "someone")
+    role = char.get("role", "")
+    lines = ["# Tonight's scene", ""]
+    lines.append(f"You're running a scene with a recurring character: "
+                 f"{name}, {role}.")
+    if char.get("persona"):
+        lines.append(f"- Who they are: {char['persona']}")
+    lines.append(f"- The setup: {scene.get('situation', '')}")
+    if scene.get("hook"):
+        lines.append(f"- The pull: {scene['hook']}")
+    if scene.get("reveal"):
+        lines.append(f"- What surfaces this time: {scene['reveal']}")
+
+    memories = scene.get("memories") or []
+    if scene.get("returning") and memories:
+        lines.append(f"- What's happened between the learner and {name} so far "
+                     "(reference it naturally, the way you'd remember a mutual "
+                     "friend — never recap it as a list):")
+        for m in memories:
+            lines.append(f"    · {m}")
+    elif not scene.get("returning"):
+        lines.append(f"- The learner is meeting {name} for the FIRST time. "
+                     "Introduce them; don't imply shared history.")
+
+    lines.append("")
+    lines.append("How to run it:")
+    lines.append(f"- You are still their teacher, Kai — but you also voice "
+                 f"{name} and set the scene. Make it feel like life, not a "
+                 "roleplay exercise.")
+    lines.append("- Hide today's target concepts inside the scene. The learner "
+                 "should be talking to a person they care about, not drilling "
+                 "grammar — the grammar is just how they get through the moment.")
+    lines.append(f"- One beat at a time. Let {name} say something real, then "
+                 "hand the learner a reason to respond in the target language.")
+    lines.append("- Stay in the story. If they struggle, {n} can slow down, "
+                 "rephrase, wait — the way a patient friend would.".format(n=name))
+    return "\n".join(lines)
+
+
 def system_prompt(context: dict[str, Any]) -> str:
     """The complete system prompt for any Kai interaction."""
-    return KAI_PERSONA + "\n\n" + student_brief(context)
+    prompt = KAI_PERSONA + "\n\n" + student_brief(context)
+    scene = context.get("story_scene")
+    if scene:
+        prompt += "\n\n" + scene_brief(scene)
+    return prompt

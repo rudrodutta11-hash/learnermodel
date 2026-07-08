@@ -216,7 +216,13 @@ async function startConversation(mins, why) {
     method: 'POST', body: JSON.stringify({ minutes: mins }) });
   chat = { sessionId: r.session_id, startedAt: Date.now(), budget: r.minutes };
   $('chat-messages').innerHTML = '';
-  $('chat-why').textContent = why || r.explanation;
+  // Name who they're with — the scene, not "conversation practice".
+  if (r.scene && r.scene.character) {
+    const verb = r.scene.returning ? 'Back with' : 'You meet';
+    $('chat-why').textContent = `${verb} ${r.scene.character}, the ${r.scene.role}.`;
+  } else {
+    $('chat-why').textContent = why || r.explanation;
+  }
   renderMessage('teacher', r.opener);
   clearInterval(chatTick);
   chatTick = setInterval(() => {

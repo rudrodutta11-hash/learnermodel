@@ -91,9 +91,11 @@ def _teacher_context(session: dict, user_id: str) -> dict:
         "difficulty": rec["difficulty"],
         "minutes": session["minutes"],
         "learner": profile.summary(),
-        # Frozen at session start: what Kai remembered walking in stays
-        # consistent for the whole conversation.
+        # Frozen at session start: what Kai remembered walking in, and the
+        # story scene he's running, both stay consistent for the whole
+        # conversation.
         "memory": rec.get("memory"),
+        "story_scene": rec.get("story_scene"),
     }
 
 
@@ -119,8 +121,12 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
     ))
     # The engine chose WHAT (concepts, difficulty, why); this experience
     # delivers it conversationally regardless of which format it scored best.
-    # Kai's memory of the relationship is snapshotted here so it stays
+    # The Story Engine chooses WHO the learner meets and stages the scene,
+    # so today's concepts get hidden inside a continuing story. Both Kai's
+    # relationship memory and the scene are snapshotted here so they stay
     # consistent for the whole session.
+    now = time.time()
+    scene = state.open_story_scene(user_id, now)
     rec_snapshot = {
         "goal": ob["goal"],
         "concepts": list(rec.concepts),
@@ -128,6 +134,7 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
         "need": rec.need,
         "explanation": rec.explanation,
         "memory": state.relationship_memory(user_id),
+        "story_scene": scene,
     }
 
     session_id = new_session_id()
@@ -153,6 +160,7 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
         "difficulty": rec.difficulty, "minutes": req.minutes,
         "learner": profile.summary(),
         "memory": rec_snapshot["memory"],
+        "story_scene": scene,
     }
     opener = state.teacher.chat(
         [{"role": "user", "content": OPENER_CUE.format(minutes=req.minutes)}],
@@ -165,6 +173,11 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
         "opener": opener,
         "concepts": rec_snapshot["concepts"],
         "explanation": rec.explanation,
+        "scene": {
+            "character": scene["character"]["name"],
+            "role": scene["character"]["role"],
+            "returning": scene["returning"],
+        },
         "preview": episode_preview(
             need=rec.need, concepts=rec_snapshot["concepts"],
             minutes=req.minutes, goal=ob["goal"],
@@ -241,6 +254,13 @@ def end(session_id: str, user_id: str = Depends(state.current_user)):
         session_id=session_id,
     )
     summary["teacher_notes"] = assessment.get("notes", "")
+
+    # Advance the story: this character's thread moves one beat forward and
+    # records what the learner will remember — but only if the learner
+    # actually showed up for the scene (no turns = they bounced, story waits).
+    scene = json.loads(session["recommendation"]).get("story_scene")
+    if scene and learner_turns > 0:
+        state.advance_story(user_id, scene["character_id"], scene["beat_index"], now)
 
     return {
         "summary": summary,

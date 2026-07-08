@@ -111,6 +111,9 @@ class ScriptedTeacher:
     def chat(self, messages: list[dict[str, str]], context: dict[str, Any]) -> str:
         last = messages[-1]["content"] if messages else ""
         if last.startswith("("):  # stage direction → session opener
+            scene = context.get("story_scene")
+            if scene:
+                return _scene_opener(scene, context)
             concepts = [str(c) for c in context.get("concepts") or []]
             focus = concepts[0] if concepts else "something new"
             return (
@@ -126,6 +129,21 @@ class ScriptedTeacher:
 
     def assess(self, transcript: list[dict[str, str]], context: dict[str, Any]) -> dict:
         return _fallback_assessment(context.get("concepts") or [])
+
+
+def _scene_opener(scene: dict[str, Any], context: dict[str, Any]) -> str:
+    """Mock Kai staging a story scene — enough to feel the narrative in
+    development without touching the API. The real Kai does this richly."""
+    char = scene.get("character") or {}
+    name = char.get("name", "someone")
+    role = char.get("role", "")
+    greet = "I'm Kai. " if not (context.get("memory") or {}).get("sessions_together") else ""
+    if scene.get("returning") and scene.get("memories"):
+        return (f"{greet}{scene['situation']} You two have history — "
+                f"{scene['memories'][-1]} How do you pick things back up "
+                f"with {name}? In Spanish.")
+    return (f"{greet}{scene['situation']} This is {name}, the {role}. "
+            f"Go on — say something to them.")
 
 
 def _memory_line(context: dict[str, Any]) -> str:

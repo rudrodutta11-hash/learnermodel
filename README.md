@@ -14,6 +14,11 @@ traditional course.
   thing this learner can do in the next few minutes?"*
 - `experience/` — pluggable delivery formats (mini lesson, flashcards,
   quiz, writing, conversation, story), all voiced by one AI teacher
+- `story/` — the reusable Story Engine: recurring characters (Carlos the
+  taxi driver, María the receptionist, Ana, Diego) whose arcs continue
+  across sessions. Conversations continue their story; Kai references what
+  happened last time; the learning hides inside the narrative. Cast is
+  swappable per subject — see `docs/story.md`
 - `app/` — FastAPI MVP: auth, onboarding, the "how much time do you have?"
   dashboard, one recommendation, session summaries, the AI teacher (Kai),
   and the live conversation experience (`/api/conversation/*`): chat with

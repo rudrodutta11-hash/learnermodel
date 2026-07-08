@@ -28,8 +28,15 @@ systems. Everything else — including subjects and content — plugs into them.
                        ▼                                         │
              ┌─────────────────────┐      ┌──────────────┐       │
              │ Experience Engine   │◄─────┤  AI Teacher  │       │
-             │ (delivery: HOW)     │      │  (one voice) │       │
-             └─────────┬───────────┘      └──────────────┘       │
+             │ (delivery: HOW)     │      │  (Kai — one  │       │
+             └─────────┬───────────┘      │   voice)     │       │
+                       │           ┌──────┤              │       │
+                       │           │      └──────────────┘       │
+                       │   ┌───────▼────────┐  who the learner   │
+                       │   │  Story Engine  │  meets tonight;     │
+                       │   │  (recurring    │  continues their    │
+                       │   │   characters)  │  story              │
+                       │   └────────────────┘                     │
                        │ InteractionEvents                       │
                        └─────────────────────────────────────────┘
 ```
@@ -129,6 +136,37 @@ Every experience generates its content through the **AI Teacher**
 (`app/teacher.py`) — one consistent persona. The Teacher separates WHAT
 is said from HOW it's delivered, so conversational voice (TTS, phone
 calls) plugs in later as a new transport without rewriting experiences.
+
+## 6. Story Engine (`story/`)
+
+Recurring characters whose stories continue across sessions, so the
+learner comes back to find out what happens to Carlos, not to "practice
+Spanish". A reusable narrative layer that sits beside the Experience
+Engine:
+
+- **Cast** (`story/cast.py`) — characters are data: a persona plus an
+  ordered arc of beats (Carlos the taxi driver saving for his daughter's
+  quinceañera; María the receptionist who's never left her city…). Casts
+  are subject-scoped and swappable via `register_cast` — the engine knows
+  nothing about taxis, only how to sequence an arc, which is what makes it
+  drop into any subject.
+- **Story threads** (`story/state.py`) — per-learner, per-character:
+  how far into the arc they are, how many times they've met, and the
+  memories Kai can reference. Kept separate from the LearnerProfile for
+  the same reason KnowledgeState is: the profile is universal, a
+  relationship with Carlos is subject content.
+- **Engine** (`story/engine.py`) — deterministic sequencing: introduce
+  new faces until the ensemble is established, then rotate through
+  whoever's waited longest, advancing each arc one beat per visit. The
+  conversation experience asks it who the learner meets tonight, stages
+  the beat inside Kai's system prompt, and advances the thread when the
+  session ends (only if the learner actually showed up).
+
+The learning target still comes from the Recommendation Engine — the
+Story Engine only decides *whose story* today's concepts hide inside.
+Kai plays the scene and references prior encounters from the thread's
+memories, so the practice disappears into a narrative the learner is
+invested in.
 
 ---
 

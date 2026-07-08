@@ -15,6 +15,7 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("LEARNER_DATA_DIR", "data"))
 PROFILES_DIR = DATA_DIR / "profiles"
 HISTORY_DIR = DATA_DIR / "history"
+STORY_DIR = DATA_DIR / "story"
 
 
 def connect() -> sqlite3.Connection:

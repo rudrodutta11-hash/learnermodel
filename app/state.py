@@ -17,6 +17,8 @@ from learner_model.history import SessionHistory
 from learner_model.knowledge import Concept, KnowledgeState
 from learner_model.store import load_profile as _load, save_profile
 from recommendation import RecommendationEngine, SessionContext, episode_preview
+from story import StoryEngine, character_by_id
+from story.store import load_story as _load_story, save_story as _save_story
 
 from . import auth, db
 from . import events as events_log
@@ -26,6 +28,7 @@ from .teacher import make_teacher
 SUBJECT = "primary"  # MVP: one subject track per learner; the model is already multi-subject
 
 engine = RecommendationEngine()
+story_engine = StoryEngine()
 teacher = make_teacher()
 
 
@@ -72,6 +75,29 @@ def onboarding(user_id: str) -> dict:
     if row is None:
         raise HTTPException(status_code=400, detail="Complete onboarding first")
     return dict(row)
+
+
+def open_story_scene(user_id: str, now: float) -> dict:
+    """Pick tonight's recurring character and stage the current beat of
+    their story. Read-only — the thread only advances when the session
+    ends (see advance_story)."""
+    story = _load_story(user_id, db.STORY_DIR)
+    character, beat_index, scene = story_engine.next_scene(story, SUBJECT, now)
+    scene["character_id"] = character.id
+    scene["beat_index"] = beat_index
+    return scene
+
+
+def advance_story(user_id: str, character_id: str, beat_index: int,
+                  now: float, extra_memory: str = "") -> None:
+    """After the session, move this character's story one beat forward and
+    record what the learner will remember of it."""
+    if not character_by_id(SUBJECT, character_id):
+        return
+    story = _load_story(user_id, db.STORY_DIR)
+    story_engine.advance(story, SUBJECT, character_id, beat_index, now,
+                         extra_memory=extra_memory)
+    _save_story(story, db.STORY_DIR)
 
 
 def relationship_memory(user_id: str) -> dict:
