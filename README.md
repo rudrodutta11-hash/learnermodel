@@ -24,10 +24,32 @@ traditional course.
 
 ```bash
 pip install -e ".[app]"
-export ANTHROPIC_API_KEY=sk-...   # optional; falls back to a scripted teacher
 uvicorn app.main:app --reload
 # open http://localhost:8000
 ```
+
+### AI_MODE — control API spend
+
+The AI teacher's backend is selected by `AI_MODE`:
+
+| `AI_MODE` | Backend | Cost |
+|---|---|---|
+| `mock` (default) | `ScriptedTeacher` — deterministic, no network | Free |
+| `cheap` | Claude Haiku (`claude-haiku-4-5`) | Lowest-cost real model |
+| `premium` | Claude Opus (`claude-opus-4-8`) | Production-quality generation |
+
+Default is `mock` so building, testing, and demoing never touches your
+credits. Opt into real generation explicitly:
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+export AI_MODE=cheap      # or premium
+uvicorn app.main:app --reload
+```
+
+`cheap`/`premium` silently fall back to `mock` if `ANTHROPIC_API_KEY` is
+unset or the client fails to initialize — the app never hard-fails on a
+missing key or exhausted credits.
 
 ## Test it
 

@@ -10,10 +10,15 @@ tomorrow it can be TTS or a phone call. `generate()` and `chat()` return
 plain content with no channel assumptions, so plugging in voice means
 adding a transport, not rewriting experiences.
 
-Backends:
-  - AnthropicTeacher: Claude-powered (requires ANTHROPIC_API_KEY)
-  - ScriptedTeacher: deterministic offline fallback so the app and tests
-    run without network access.
+Backends, selected by the AI_MODE env var:
+  - mock (default): ScriptedTeacher — deterministic, offline, zero cost.
+    Use this for all day-to-day development so you never burn credits.
+  - cheap: AnthropicTeacher on Haiku — cheapest real model, for testing
+    actual AI output without premium spend.
+  - premium: AnthropicTeacher on Opus — production-quality generation.
+
+AI_MODE defaults to "mock" specifically so running the app or tests never
+costs anything unless you opt in.
 """
 from __future__ import annotations
 
@@ -38,20 +43,24 @@ create, plus JSON context about the learner and their goal. Produce only
 the experience content — no meta-commentary about being an AI.
 """
 
-MODEL = "claude-opus-4-8"
+MODELS_BY_MODE = {
+    "cheap": "claude-haiku-4-5",
+    "premium": "claude-opus-4-8",
+}
 
 
 class AnthropicTeacher:
     """Claude-backed teacher."""
 
-    def __init__(self) -> None:
+    def __init__(self, model: str) -> None:
         import anthropic
 
         self._client = anthropic.Anthropic()
+        self._model = model
 
     def generate(self, instruction: str, context: dict[str, Any]) -> str:
         response = self._client.messages.create(
-            model=MODEL,
+            model=self._model,
             max_tokens=2000,
             system=PERSONA,
             messages=[{
@@ -72,7 +81,7 @@ class AnthropicTeacher:
             + json.dumps(context, indent=2, default=str)
         )
         response = self._client.messages.create(
-            model=MODEL,
+            model=self._model,
             max_tokens=1000,
             system=system,
             messages=messages,
@@ -100,10 +109,26 @@ class ScriptedTeacher:
 
 
 def make_teacher():
-    """Factory: Claude when credentials exist, scripted otherwise."""
+    """Factory, controlled by AI_MODE:
+
+      mock    (default) -> ScriptedTeacher, zero cost, no network
+      cheap              -> AnthropicTeacher on Haiku
+      premium            -> AnthropicTeacher on Opus
+
+    Falls back to ScriptedTeacher if AI_MODE requests a real model but
+    ANTHROPIC_API_KEY is missing or the client fails to initialize —
+    the app should never hard-fail just because credits ran out.
+    """
+    mode = os.environ.get("AI_MODE", "mock").lower()
+    if mode not in ("mock", "cheap", "premium"):
+        raise ValueError(f"Invalid AI_MODE {mode!r}; expected mock, cheap, or premium")
+
+    if mode == "mock":
+        return ScriptedTeacher()
+
     if os.environ.get("ANTHROPIC_API_KEY"):
         try:
-            return AnthropicTeacher()
+            return AnthropicTeacher(model=MODELS_BY_MODE[mode])
         except Exception:
             pass
     return ScriptedTeacher()
