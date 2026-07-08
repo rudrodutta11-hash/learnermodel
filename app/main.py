@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 from experience import get_experience
 from learner_model import LearnerProfile, new_session_id
 from learner_model.store import save_profile
-from recommendation import SessionContext
+from recommendation import SessionContext, episode_preview
 
 from . import auth, conversation, db, state
 from .events import EventType
@@ -113,6 +113,7 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
     )
     rec = state.engine.recommend(profile, knowledge, context)
     session_id = new_session_id()
+    memory = state.relationship_memory(user_id)
 
     payload = {
         "recommendation": {
@@ -123,6 +124,12 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
             "expected_outcome": rec.expected_outcome,
             "estimated_minutes": rec.estimated_minutes,
         },
+        # The learner-facing pitch: an episode card, not a syllabus entry.
+        "preview": episode_preview(
+            need=rec.need, concepts=list(rec.concepts),
+            minutes=rec.estimated_minutes, goal=onboarding["goal"],
+            memory=memory,
+        ),
         "session_id": session_id,
     }
 
@@ -143,7 +150,7 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
 
     experience = get_experience(rec.activity_type)
     plan = experience.build(rec, profile, state.teacher, goal=onboarding["goal"],
-                            memory=state.relationship_memory(user_id))
+                            memory=memory)
     payload["experience"] = {
         "title": plan.title,
         "content": plan.content,

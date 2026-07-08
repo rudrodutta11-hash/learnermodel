@@ -32,6 +32,14 @@
   #chat-compose { display: flex; gap: .5rem; align-items: flex-start; }
   #chat-compose input { flex: 1; margin: 0; }
   #chat-timer { float: right; }
+
+  /* Episode cards */
+  .episode { background: linear-gradient(160deg, #b5562d14, transparent 60%); }
+  .kicker { text-transform: uppercase; letter-spacing: .12em; font-size: .75rem;
+    opacity: .6; margin-bottom: .2rem; }
+  .episode h2 { margin: .1rem 0 .4rem; font-size: 1.45rem; }
+  #next-rec { margin-top: 1rem; }
+  #next-rec .card { cursor: pointer; }
 </style>
 </head>
 <body>
@@ -67,7 +75,17 @@
     <button onclick="recommend(10)">10 min</button>
     <button onclick="recommend(20)">20 min</button>
   </div>
-  <div id="next-rec" class="muted"></div>
+  <div id="next-rec"></div>
+</div>
+
+<!-- The episode card: every recommendation lands here first, pitched like
+     the next chapter — never like a lesson plan. -->
+<div id="episode" class="card episode hidden">
+  <p class="kicker" id="ep-kicker"></p>
+  <h2 id="ep-title"></h2>
+  <p id="ep-teaser"></p>
+  <button class="primary" onclick="playEpisode()">▶ Play</button>
+  <button onclick="show('dashboard')">Not now</button>
 </div>
 
 <div id="activity" class="card hidden">
@@ -99,7 +117,7 @@
 </div>
 
 <div id="summary" class="card hidden">
-  <h2>Session saved</h2>
+  <h2>End of chapter</h2>
   <div id="summary-body"></div>
   <button class="primary" onclick="show('dashboard')">Back</button>
 </div>
@@ -111,7 +129,7 @@ let chat = null;         // { sessionId, startedAt, budget }
 let chatTick = null;
 const $ = id => document.getElementById(id);
 const show = id => {
-  for (const s of ['auth','onboarding','dashboard','activity','chat','summary'])
+  for (const s of ['auth','onboarding','dashboard','episode','activity','chat','summary'])
     $(s).classList.toggle('hidden', s !== id);
 };
 const api = async (path, opts = {}) => {
@@ -142,12 +160,21 @@ async function onboard() {
 
 async function recommend(mins) {
   const r = await api('/api/recommendation?minutes=' + mins);
-  if (r.recommendation.activity_type === 'conversation')
-    return startConversation(mins, r.recommendation.explanation);
   current = r;
-  $('act-title').textContent = r.experience.title +
+  current.minutes = mins;
+  $('ep-kicker').textContent = r.preview.kicker;
+  $('ep-title').textContent = r.preview.title;
+  $('ep-teaser').textContent = r.preview.teaser;
+  show('episode');
+}
+
+function playEpisode() {
+  const r = current;
+  if (r.recommendation.activity_type === 'conversation')
+    return startConversation(r.minutes, r.preview.teaser);
+  $('act-title').textContent = r.preview.title +
     ' · ' + r.recommendation.estimated_minutes + ' min';
-  $('act-why').textContent = r.recommendation.explanation;
+  $('act-why').textContent = r.experience.title;
   $('act-content').textContent = r.experience.content;
   show('activity');
 }
@@ -240,20 +267,24 @@ async function endChat() {
 function showSummary(summary, nextRec) {
   const lines = [];
   if (summary.teacher_notes) lines.push(`<p><em>${esc(summary.teacher_notes)}</em></p>`);
-  lines.push(`<p><strong>Practiced:</strong> ${
+  lines.push(`<p><strong>This chapter:</strong> ${
     (summary.concepts_practiced || []).map(esc).join(', ') || '—'}</p>`);
-  lines.push(`<p><strong>Mistakes:</strong> ${
-    (summary.mistakes || []).map(esc).join(', ') || 'none spotted'}</p>`);
+  lines.push(`<p><strong>Plot twists:</strong> ${
+    (summary.mistakes || []).map(esc).join(', ') || 'none — clean run'}</p>`);
   if (summary.estimated_mastery != null)
-    lines.push(`<p><strong>Estimated mastery:</strong> ${
+    lines.push(`<p><strong>How solid it is:</strong> ${
       Math.round(summary.estimated_mastery * 100)}%</p>`);
   if (summary.recommended_review_at)
-    lines.push(`<p><strong>Review due:</strong> ${
+    lines.push(`<p><strong>Comes back around:</strong> ${
       new Date(summary.recommended_review_at * 1000).toLocaleString()}</p>`);
   $('summary-body').innerHTML = lines.join('');
-  if (nextRec) {
-    $('next-rec').innerHTML = `<p>Up next: <strong>${esc(nextRec.activity_type)}</strong>
-      — ${esc(nextRec.explanation)}</p>`;
+  if (nextRec && nextRec.preview) {
+    const p = nextRec.preview;
+    $('next-rec').innerHTML = `<div class="card episode" onclick="recommend(5)">
+      <p class="kicker">Next up · ${esc(p.kicker)}</p>
+      <h3>${esc(p.title)}</h3>
+      <p>${esc(p.teaser)}</p>
+      <p class="muted">▶ Tap to play</p></div>`;
   }
   show('summary');
 }

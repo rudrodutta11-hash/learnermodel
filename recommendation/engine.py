@@ -127,10 +127,13 @@ class RecommendationEngine:
             activity_type=activity,
             difficulty=round(self._difficulty(profile), 2),
             concepts=concepts,
+            # Learner-facing copy: story language only, never syllabus
+            # language ("lesson", "exercise", "review"...) — the episode
+            # preview in recommendation/preview.py is built on top of this
+            # and tests enforce the ban across both.
             explanation=(
-                f"{need.reason} A {activity.value.replace('_', ' ')} is the format "
-                f"that works best for you right now, sized to "
-                f"{minutes:.0f} minutes."
+                f"{need.reason} Kai's set it up the way you do this best — "
+                f"{minutes:.0f} minutes, in and out."
             ),
             expected_outcome=need.outcome,
             estimated_minutes=round(minutes, 1),
@@ -160,10 +163,10 @@ class RecommendationEngine:
                     value=0.5 + 0.5 * urgency,
                     concepts=tuple(s.concept.id for s in review_queue),
                     reason=(
-                        f"{len(review_queue)} concept(s) are fading from memory "
-                        "and due for review."
+                        f"{len(review_queue)} thing(s) you've already won are "
+                        "quietly slipping away."
                     ),
-                    outcome="Reinforce fading memories before they need relearning.",
+                    outcome="Catch them at the door — keep what's yours.",
                 )
             )
 
@@ -176,10 +179,10 @@ class RecommendationEngine:
                     value=min(1.0, 0.4 + 0.15 * top.count),
                     concepts=tuple(r.signature for r in recurring[:3]),
                     reason=(
-                        f"You've repeated the same mistake ({top.signature}) "
-                        f"{top.count} times."
+                        f"An old enemy — {top.signature.replace('-', ' ')} — "
+                        f"has beaten you {top.count} times."
                     ),
-                    outcome="Break a recurring error pattern with targeted practice.",
+                    outcome="The rematch. This one ends differently.",
                 )
             )
 
@@ -189,10 +192,10 @@ class RecommendationEngine:
                 kind="new_material",
                 value=0.55 if not review_queue else 0.35,
                 concepts=tuple(c.id for c in frontier),
-                reason="You're on top of your reviews — time to learn something new."
+                reason="Everything behind you is solid — time to open the next door."
                 if not review_queue
-                else "Mixing in new material keeps momentum.",
-                outcome="Expand into new territory at the right difficulty.",
+                else "A little new territory keeps the story moving.",
+                outcome="New ground, claimed.",
             )
         )
         return needs

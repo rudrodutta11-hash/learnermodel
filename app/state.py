@@ -16,7 +16,7 @@ from learner_model import InteractionEvent, LearnerProfile, Modality, new_sessio
 from learner_model.history import SessionHistory
 from learner_model.knowledge import Concept, KnowledgeState
 from learner_model.store import load_profile as _load, save_profile
-from recommendation import RecommendationEngine, SessionContext
+from recommendation import RecommendationEngine, SessionContext, episode_preview
 
 from . import auth, db
 from . import events as events_log
@@ -120,7 +120,8 @@ def relationship_memory(user_id: str) -> dict:
 
 
 def next_recommendation(user_id: str, minutes: float) -> dict:
-    """A fresh recommendation reflecting everything learned so far."""
+    """A fresh recommendation reflecting everything learned so far —
+    pitched as the next episode, never as a syllabus entry."""
     profile = load_profile(user_id)
     ob = onboarding(user_id)
     rec = engine.recommend(
@@ -134,6 +135,11 @@ def next_recommendation(user_id: str, minutes: float) -> dict:
         "explanation": rec.explanation,
         "expected_outcome": rec.expected_outcome,
         "estimated_minutes": rec.estimated_minutes,
+        "preview": episode_preview(
+            need=rec.need, concepts=list(rec.concepts),
+            minutes=rec.estimated_minutes, goal=ob["goal"],
+            memory=relationship_memory(user_id),
+        ),
     }
 
 

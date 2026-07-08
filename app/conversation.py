@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from learner_model import new_session_id
-from recommendation import SessionContext
+from recommendation import SessionContext, episode_preview
 
 from . import db, state
 from . import events as events_log
@@ -165,6 +165,11 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
         "opener": opener,
         "concepts": rec_snapshot["concepts"],
         "explanation": rec.explanation,
+        "preview": episode_preview(
+            need=rec.need, concepts=rec_snapshot["concepts"],
+            minutes=req.minutes, goal=ob["goal"],
+            memory=rec_snapshot["memory"],
+        ),
         "minutes": req.minutes,
     }
 

@@ -65,7 +65,7 @@ class _PromptedExperience:
 
 register_experience(_PromptedExperience(
     activity_type=Modality.MINI_LESSON,
-    title="Mini lesson",
+    title="The idea",
     interaction="read-then-answer",
     instruction=(
         "Teach today's mini lesson. Open with one line in your voice — if "
@@ -78,7 +78,7 @@ register_experience(_PromptedExperience(
 
 register_experience(_PromptedExperience(
     activity_type=Modality.FLASHCARD,
-    title="Flashcards",
+    title="Rapid fire",
     interaction="answer",
     instruction=(
         "Build today's flashcard deck. One line of framing from you first — "
@@ -90,7 +90,7 @@ register_experience(_PromptedExperience(
 
 register_experience(_PromptedExperience(
     activity_type=Modality.QUIZ,
-    title="Quick quiz",
+    title="Prove it",
     interaction="answer",
     instruction=(
         "Set today's quiz. One line of framing in your voice — if this "
@@ -102,7 +102,7 @@ register_experience(_PromptedExperience(
 
 register_experience(_PromptedExperience(
     activity_type=Modality.WRITING,
-    title="Writing exercise",
+    title="In your own words",
     interaction="write",
     instruction=(
         "Set one short writing task that forces today's concepts into use. "
@@ -114,7 +114,7 @@ register_experience(_PromptedExperience(
 
 register_experience(_PromptedExperience(
     activity_type=Modality.CONVERSATION,
-    title="Conversation",
+    title="Talk with Kai",
     interaction="chat",
     instruction=(
         "Open today's conversation. If you have history together, pick up "
@@ -126,7 +126,7 @@ register_experience(_PromptedExperience(
 
 register_experience(_PromptedExperience(
     activity_type=Modality.STORY,
-    title="Story",
+    title="The story",
     interaction="read-then-answer",
     instruction=(
         "Tell a short story that smuggles today's concepts in so they're "
