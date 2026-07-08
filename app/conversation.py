@@ -43,6 +43,25 @@ OPENER_CUE = (
 WRAP_UP_GRACE = 1.5  # let a session run 50% over before Kai starts wrapping up
 
 
+def _phase_note(elapsed_min: float, budget_min: float) -> str:
+    """A stage direction for where we are in the session's arc, so Kai
+    paces a conversation like a real teacher paces a real session:
+    settle in fast, work the middle, and LAND the ending on time."""
+    fraction = elapsed_min / max(budget_min, 1e-6)
+    if fraction > WRAP_UP_GRACE:
+        return ("Time's up and then some — wrap NOW, warmly: one line naming "
+                "what they did better than last time, then let them go.")
+    if fraction > 0.75:
+        return ("Closing minutes. Start landing the session: one last push "
+                "at the target, then a real ending — name one specific thing "
+                "they did well today. Don't open new territory.")
+    if fraction < 0.25:
+        return ("Opening minutes. Settle in fast — have them producing "
+                "within your next exchange, not listening.")
+    return ("Mid-session. Keep the thread alive; if they're steady, raise "
+            "the bar one notch right here.")
+
+
 class StartRequest(BaseModel):
     minutes: float = Field(gt=0, le=60)
 
@@ -118,6 +137,7 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
 
     rec = state.engine.recommend(profile, ks, SessionContext(
         subject=state.SUBJECT, available_minutes=req.minutes, goal=ob["goal"],
+        recent_activity_types=state.recent_activity_types(user_id),
     ))
     # The engine chose WHAT (concepts, difficulty, why); this experience
     # delivers it conversationally regardless of which format it scored best.
@@ -198,11 +218,7 @@ def message(session_id: str, req: MessageRequest,
 
     context = _teacher_context(session, user_id)
     elapsed_min = (time.time() - session["started_at"]) / 60.0
-    if elapsed_min > session["minutes"] * WRAP_UP_GRACE:
-        context["time_note"] = (
-            "The session is over its time budget — wrap up warmly within a "
-            "message or two and suggest ending here."
-        )
+    context["time_note"] = _phase_note(elapsed_min, session["minutes"])
 
     reply = state.teacher.chat(_as_chat_messages(_transcript(session_id, user_id)), context)
     _log_turn(session_id, user_id, "teacher", reply)
@@ -267,7 +283,16 @@ def end(session_id: str, user_id: str = Depends(state.current_user)):
     if scene and learner_turns > 0:
         state.advance_story(user_id, scene["character_id"], scene["beat_index"], now)
 
+    # The cliffhanger: stage tomorrow's beat (read-only) and hand its hook
+    # back with the credits. It's not marketing copy — it is literally what
+    # will happen next time they open the app.
+    upcoming = state.open_story_scene(user_id, now)
     return {
         "summary": summary,
+        "next_time": {
+            "character": upcoming["character"]["name"],
+            "role": upcoming["character"]["role"],
+            "hook": upcoming["hook"],
+        },
         "next_recommendation": state.next_recommendation(user_id, session["minutes"]),
     }

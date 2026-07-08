@@ -100,6 +100,60 @@ def advance_story(user_id: str, character_id: str, beat_index: int,
     _save_story(story, db.STORY_DIR)
 
 
+def streak_days(user_id: str, now: float | None = None) -> int:
+    """Consecutive calendar days (UTC) with at least one finished session,
+    counting back from today — or from yesterday if today's still open,
+    so an unbroken run isn't shown as zero before tonight's session."""
+    now = now or time.time()
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT CAST(created_at / 86400 AS INTEGER) AS day "
+            "FROM session_summaries WHERE user_id = ? ORDER BY day DESC",
+            (user_id,),
+        ).fetchall()
+    days = [r["day"] for r in rows]
+    today = int(now // 86400)
+    if not days or days[0] < today - 1:
+        return 0
+    streak, expected = 0, days[0]
+    for day in days:
+        if day != expected:
+            break
+        streak += 1
+        expected -= 1
+    return streak
+
+
+def home_summary(user_id: str) -> dict:
+    """Everything the dashboard needs to feel like a running story:
+    where you are (chapter, streak), what just happened (previously),
+    and what's waiting tonight (the actual next story beat's hook)."""
+    now = time.time()
+    memory = relationship_memory(user_id)
+    scene = open_story_scene(user_id, now)
+
+    previously = None
+    last = memory.get("last_session")
+    if last:
+        what = ", ".join(c.replace("-", " ") for c in last["concepts"][:3])
+        previously = f"You and Kai worked {what}."
+        if last["mistakes"]:
+            fought = last["mistakes"][0].replace("-", " ")
+            previously += f" {fought} put up a fight — Kai hasn't forgotten."
+
+    return {
+        "chapter": memory["sessions_together"] + 1,
+        "streak_days": streak_days(user_id, now),
+        "previously": previously,
+        "tonight": {
+            "character": scene["character"]["name"],
+            "role": scene["character"]["role"],
+            "returning": scene["returning"],
+            "hook": scene["hook"],
+        },
+    }
+
+
 def write_journal(user_id: str, session_id: str | None, note: str) -> None:
     """Append one entry to Kai's teaching journal. INSERT only — like the
     event log, the journal is never rewritten. It holds pedagogical
@@ -177,6 +231,18 @@ def relationship_memory(user_id: str) -> dict:
     return memory
 
 
+def recent_activity_types(user_id: str, limit: int = 2) -> tuple[str, ...]:
+    """Activity types of the most recent sessions, newest first — feeds
+    the engine's variety factor so formats don't repeat on autopilot."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT activity_type FROM session_summaries WHERE user_id = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    return tuple(r["activity_type"] for r in rows)
+
+
 def next_recommendation(user_id: str, minutes: float) -> dict:
     """A fresh recommendation reflecting everything learned so far —
     pitched as the next episode, never as a syllabus entry."""
@@ -184,7 +250,8 @@ def next_recommendation(user_id: str, minutes: float) -> dict:
     ob = onboarding(user_id)
     rec = engine.recommend(
         profile, knowledge(user_id),
-        SessionContext(subject=SUBJECT, available_minutes=minutes, goal=ob["goal"]),
+        SessionContext(subject=SUBJECT, available_minutes=minutes, goal=ob["goal"],
+                       recent_activity_types=recent_activity_types(user_id)),
     )
     return {
         "activity_type": rec.activity_type.value,

@@ -70,6 +70,17 @@ class SessionContext:
     available_minutes: float
     goal: str = ""
     now_ts: float = field(default_factory=time.time)
+    # Activity types of the most recent sessions, newest first. Used for
+    # the variety factor: same format twice in a row must EARN its repeat.
+    recent_activity_types: tuple[str, ...] = ()
+
+
+# A format repeated back-to-back is penalized (not banned — if flashcards
+# are overwhelmingly right tonight, flashcards still win). Two sessions
+# ago costs less; further back costs nothing. Variety is pedagogy, not
+# cosmetics: interleaving formats strengthens retrieval, and a product
+# that opens on the same card every night stops feeling authored.
+REPEAT_PENALTY = (0.6, 0.85)
 
 
 @dataclass(frozen=True)
@@ -112,6 +123,7 @@ class RecommendationEngine:
                     * profile.modality.explore_score(activity)
                     * max(0.1, profile.challenge.fit(self._difficulty(profile)))
                     * self._time_fit(profile, context, activity)
+                    * self._variety_factor(activity, context)
                 )
                 if best is None or score > best[0]:
                     best = (score, need, activity)
@@ -199,6 +211,13 @@ class RecommendationEngine:
             )
         )
         return needs
+
+    @staticmethod
+    def _variety_factor(activity: Modality, context: SessionContext) -> float:
+        for position, recent in enumerate(context.recent_activity_types):
+            if recent == activity.value and position < len(REPEAT_PENALTY):
+                return REPEAT_PENALTY[position]
+        return 1.0
 
     @staticmethod
     def _difficulty(profile: LearnerProfile) -> float:

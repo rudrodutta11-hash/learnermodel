@@ -128,6 +128,15 @@ class ScriptedTeacher:
                 f"{focus} — not recite it, use it. So: tell me about your "
                 f"day, and work it in."
             )
+        note = context.get("time_note") or ""
+        if "wrap" in note or "landing" in note.lower():
+            concepts = [str(c) for c in context.get("concepts") or []]
+            won = concepts[0] if concepts else "today's ground"
+            return (
+                f"And that's where we stop — on a good one. You handled "
+                f"{won} faster than when we started. Same time tomorrow; "
+                f"I'll know if you skipped."
+            )
         return (
             f"Good — and notice what you just did there. Push it one step: "
             f"say that again, but change one thing about it. "
@@ -181,7 +190,7 @@ def _extract_json(text: str) -> dict | None:
 
 
 def _clean_assessment(parsed: dict, planned: list) -> dict:
-    concepts = [str(c) for c in parsed.get("concepts") or planned] or ["conversation-practice"]
+    concepts = [str(c) for c in parsed.get("concepts") or planned] or ["live-conversation"]
     mistakes = [str(m) for m in parsed.get("mistakes") or []]
     try:
         confidence = min(1.0, max(0.0, float(parsed.get("confidence", 0.6))))
@@ -199,7 +208,7 @@ def _clean_assessment(parsed: dict, planned: list) -> dict:
 def _fallback_assessment(planned: list) -> dict:
     focus = str(planned[0]) if planned else "new material"
     return {
-        "concepts": [str(c) for c in planned] or ["conversation-practice"],
+        "concepts": [str(c) for c in planned] or ["live-conversation"],
         "mistakes": [],
         "confidence": 0.6,
         "notes": "Solid session — you showed up and did the work. "

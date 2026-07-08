@@ -67,7 +67,12 @@
   <button class="primary" onclick="onboard()">Start learning</button>
 </div>
 
+<!-- The dashboard opens mid-story: where you are, what just happened,
+     who's waiting tonight. The only question is still: how long? -->
 <div id="dashboard" class="card hidden">
+  <p class="kicker" id="home-meta"></p>
+  <p class="muted" id="home-prev"></p>
+  <div id="home-tonight"></div>
   <h2>How much time do you have?</h2>
   <div class="time-btns">
     <button onclick="recommend(2)">2 min</button>
@@ -131,7 +136,21 @@ const $ = id => document.getElementById(id);
 const show = id => {
   for (const s of ['auth','onboarding','dashboard','episode','activity','chat','summary'])
     $(s).classList.toggle('hidden', s !== id);
+  if (id === 'dashboard') loadHome();  // always open mid-story
 };
+
+async function loadHome() {
+  try {
+    const h = await api('/api/home');
+    $('home-meta').textContent = 'Chapter ' + h.chapter +
+      (h.streak_days > 1 ? ` · day ${h.streak_days} of your streak` : '');
+    $('home-prev').textContent = h.previously ? 'Previously: ' + h.previously : '';
+    const t = h.tonight;
+    $('home-tonight').innerHTML = t ? `<p><strong>Tonight:</strong> ${
+      esc(t.character)}, the ${esc(t.role)}${t.returning ? '' : ' — someone new'}. ${
+      esc(t.hook)}</p>` : '';
+  } catch { /* pre-onboarding: the story hasn't started yet */ }
+}
 const api = async (path, opts = {}) => {
   const res = await fetch(path, { ...opts, headers: {
     'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token,
@@ -189,7 +208,7 @@ async function finish() {
     confidence: (+$('conf').value) / 10, difficulty: rec.difficulty,
     duration_seconds: rec.estimated_minutes * 60, engaged: true,
     session_id: current.session_id })});
-  showSummary(r, null);
+  showSummary(r, null, r.next_time);
 }
 
 /* ---------------- conversation ---------------- */
@@ -263,14 +282,14 @@ async function endChat() {
     const r = await api(`/api/conversation/${chat.sessionId}/end`, { method: 'POST' });
     clearInterval(chatTick);
     chat = null;
-    showSummary(r.summary, r.next_recommendation);
+    showSummary(r.summary, r.next_recommendation, r.next_time);
   } catch (e) { alert(e.message); }
   finally { $('chat-end').disabled = false; }
 }
 
 /* ---------------- summary ---------------- */
 
-function showSummary(summary, nextRec) {
+function showSummary(summary, nextRec, nextTime) {
   const lines = [];
   if (summary.teacher_notes) lines.push(`<p><em>${esc(summary.teacher_notes)}</em></p>`);
   lines.push(`<p><strong>This chapter:</strong> ${
@@ -283,6 +302,13 @@ function showSummary(summary, nextRec) {
   if (summary.recommended_review_at)
     lines.push(`<p><strong>Comes back around:</strong> ${
       new Date(summary.recommended_review_at * 1000).toLocaleString()}</p>`);
+  if (nextTime) {
+    // The cliffhanger — the last thing they read before closing the app.
+    lines.push(`<div class="card episode"><p class="kicker">Next time</p>
+      <p><strong>${esc(nextTime.character)}</strong>, the ${esc(nextTime.role)}. ${
+      esc(nextTime.hook)}</p>
+      <p class="muted">To be continued…</p></div>`);
+  }
   $('summary-body').innerHTML = lines.join('');
   if (nextRec && nextRec.preview) {
     const p = nextRec.preview;

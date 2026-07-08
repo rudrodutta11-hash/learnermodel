@@ -12,6 +12,7 @@ Teacher decide HOW and generate content dynamically.
 from __future__ import annotations
 
 import json
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -109,7 +110,8 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
     knowledge = state.knowledge(user_id)
 
     context = SessionContext(
-        subject=state.SUBJECT, available_minutes=minutes, goal=onboarding["goal"]
+        subject=state.SUBJECT, available_minutes=minutes, goal=onboarding["goal"],
+        recent_activity_types=state.recent_activity_types(user_id),
     )
     rec = state.engine.recommend(profile, knowledge, context)
     session_id = new_session_id()
@@ -169,7 +171,7 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
 @app.post("/api/session-summary")
 def session_summary(data: SessionSummary, user_id: str = Depends(state.current_user)):
     """The write path after every non-interactive activity."""
-    return state.apply_session_results(
+    summary = state.apply_session_results(
         user_id,
         activity_type=data.activity_type,
         concepts=data.concepts,
@@ -180,6 +182,20 @@ def session_summary(data: SessionSummary, user_id: str = Depends(state.current_u
         engaged=data.engaged,
         session_id=data.session_id,
     )
+    upcoming = state.open_story_scene(user_id, time.time())
+    summary["next_time"] = {
+        "character": upcoming["character"]["name"],
+        "role": upcoming["character"]["role"],
+        "hook": upcoming["hook"],
+    }
+    return summary
+
+
+@app.get("/api/home")
+def home(user_id: str = Depends(state.current_user)):
+    """The dashboard payload: chapter, streak, 'previously...', and
+    tonight's story hook — the app opens mid-story, never on a menu."""
+    return state.home_summary(user_id)
 
 
 @app.get("/api/events")
