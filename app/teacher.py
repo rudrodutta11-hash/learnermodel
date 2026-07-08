@@ -77,7 +77,14 @@ class AnthropicTeacher:
             'notable mistake>"], "confidence": <your 0..1 read of the '
             "student's confidence>, "
             '"notes": "<one sentence TO the student, in your own voice — '
-            'specific, no empty praise>"}\n'
+            'specific, no empty praise>", '
+            '"journal": "<1-2 sentences in your private teaching notebook '
+            "about HOW this student learns — a confidence pattern, their "
+            "pacing, a misconception and its shape, an analogy or approach "
+            "that landed (or flopped), a focus habit, a breakthrough, what "
+            "sparked their curiosity. Strictly pedagogical: no personal-life "
+            "details, no small talk. Write what a great teacher would want "
+            'their future self to know before the next lesson.>"}\n'
             f"Planned concepts were: {json.dumps(planned)} — reuse those ids "
             "where they apply; add kebab-case ids for anything else practiced.\n\n"
             "Transcript:\n"
@@ -185,16 +192,22 @@ def _clean_assessment(parsed: dict, planned: list) -> dict:
         "mistakes": mistakes,
         "confidence": confidence,
         "notes": str(parsed.get("notes", "")),
+        "journal": str(parsed.get("journal", "")).strip(),
     }
 
 
 def _fallback_assessment(planned: list) -> dict:
+    focus = str(planned[0]) if planned else "new material"
     return {
         "concepts": [str(c) for c in planned] or ["conversation-practice"],
         "mistakes": [],
         "confidence": 0.6,
         "notes": "Solid session — you showed up and did the work. "
                  "Same time tomorrow and it starts compounding.",
+        # Mock journal entry: same pedagogical shape as the real one.
+        "journal": f"Worked {focus} in conversation; held steady when pushed "
+                   f"to produce rather than recognize. Next time, open one "
+                   f"notch harder and watch the pacing.",
     }
 
 

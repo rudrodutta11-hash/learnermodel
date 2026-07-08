@@ -84,4 +84,17 @@ def init_db() -> None:
                 estimated_mastery REAL,
                 review_due_at REAL
             );
+            -- Kai's teaching journal: after each session he writes one
+            -- private observation about HOW this student learns (pacing,
+            -- confidence patterns, misconceptions, what analogy landed) —
+            -- never personal-life details. Append-only, kept forever;
+            -- recent entries are read back into his notes each session.
+            CREATE TABLE IF NOT EXISTS kai_journal (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL REFERENCES users(id),
+                session_id TEXT,
+                note TEXT NOT NULL,
+                created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_journal_user ON kai_journal(user_id, id);
         """)

@@ -255,6 +255,11 @@ def end(session_id: str, user_id: str = Depends(state.current_user)):
     )
     summary["teacher_notes"] = assessment.get("notes", "")
 
+    # Kai's teaching journal: one private pedagogical observation per real
+    # session (skipped when the learner never spoke — nothing was observed).
+    if learner_turns > 0 and assessment.get("journal"):
+        state.write_journal(user_id, session_id, assessment["journal"])
+
     # Advance the story: this character's thread moves one beat forward and
     # records what the learner will remember — but only if the learner
     # actually showed up for the scene (no turns = they bounced, story waits).

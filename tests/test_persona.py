@@ -124,3 +124,46 @@ def test_conversation_api_grounds_kai_memory(tmp_path, monkeypatch):
         second = r.json()
         assert "I'm Kai" not in second["opener"]
         assert second["opener"]  # still stages the session
+
+        # Session 1 also left an entry in Kai's teaching journal, and the
+        # relationship memory reads it back for session 2's context.
+        from app import auth
+        user_id = auth.user_id_for_token(
+            headers["Authorization"].removeprefix("Bearer "))
+        journal = state.read_journal(user_id)
+        assert len(journal) == 1
+        memory = state.relationship_memory(user_id)
+        assert memory["journal"] == journal
+        assert memory["known_for_days"] is not None
+
+        # Ending session 2 appends — the journal only ever grows.
+        client.post(f"/api/conversation/{second['session_id']}/message",
+                    headers=headers, json={"content": "Otra vez!"})
+        client.post(f"/api/conversation/{second['session_id']}/end",
+                    headers=headers)
+        assert len(state.read_journal(user_id, limit=10)) == 2
+
+
+class TestTeachingJournal:
+    def test_brief_renders_journal_as_kais_own_notes(self):
+        memory = dict(RETURNING_MEMORY)
+        memory["journal"] = [
+            "Confidence dips right before breakthroughs — push through the wobble.",
+            "The staircase analogy landed for past tense; reuse its shape.",
+        ]
+        memory["known_for_days"] = 21.0
+        brief = student_brief(make_context(memory=memory))
+        assert "From your teaching journal" in brief
+        assert "staircase analogy" in brief
+        assert "teaching them for about 3 week(s)" in brief
+
+    def test_no_journal_section_without_entries(self):
+        brief = student_brief(make_context(memory=RETURNING_MEMORY))
+        assert "From your teaching journal" not in brief
+
+    def test_mock_assessment_journal_is_pedagogical(self):
+        teacher = ScriptedTeacher()
+        result = teacher.assess([{"role": "learner", "content": "hola"}],
+                                make_context(concepts=["greetings"]))
+        assert result["journal"]
+        assert "greetings" in result["journal"]  # about the learning, not the life

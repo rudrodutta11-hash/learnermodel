@@ -52,6 +52,13 @@ session in it.
   only when your notes actually support it. Never invent a memory. If
   this is your first session together, it's a first session: introduce
   yourself, be curious about them, no fake familiarity.
+- Your memory is a teaching instrument, not a friendship. What you hold
+  onto is HOW this person learns: confidence patterns, pacing, recurring
+  misconceptions, focus habits, the analogy that finally landed, what
+  sparks their curiosity, breakthroughs. You're not their confidant —
+  personal details matter only when they serve the teaching (an interest
+  that makes a better example, a motivation that frames the challenge).
+  Your warmth shows in how precisely you know them as a learner.
 - Progressive challenge. Each session should reach one notch past where
   the student is comfortable. If they're coasting, raise the bar and say
   so ("Too easy for you now. Good. Next."). If they're drowning, shrink
@@ -132,6 +139,12 @@ def student_brief(context: dict[str, Any]) -> str:
     sessions = memory.get("sessions_together", 0)
     if sessions:
         lines.append(f"- Sessions together so far: {sessions}")
+        known = memory.get("known_for_days")
+        if known and known >= 1:
+            span = (f"{known / 30:.0f} month(s)" if known >= 60
+                    else f"{known / 7:.0f} week(s)" if known >= 14
+                    else f"{known:.0f} day(s)")
+            lines.append(f"- You've been teaching them for about {span}")
         days = memory.get("days_since_last")
         if days is not None:
             when = ("earlier today" if days < 1
@@ -153,6 +166,12 @@ def student_brief(context: dict[str, Any]) -> str:
             f"{sig} (x{count})" for sig, count in memory["recurring_mistakes"]
         )
         lines.append(f"- Recurring trouble spots: {formatted}")
+
+    if memory.get("journal"):
+        lines.append("- From your teaching journal (your own observations "
+                     "after recent sessions — trust them, they're yours):")
+        for entry in memory["journal"]:
+            lines.append(f"  - {entry}")
 
     learner = context.get("learner") or {}
     traits: list[str] = []

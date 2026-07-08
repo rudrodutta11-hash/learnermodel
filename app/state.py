@@ -100,13 +100,39 @@ def advance_story(user_id: str, character_id: str, beat_index: int,
     _save_story(story, db.STORY_DIR)
 
 
+def write_journal(user_id: str, session_id: str | None, note: str) -> None:
+    """Append one entry to Kai's teaching journal. INSERT only — like the
+    event log, the journal is never rewritten. It holds pedagogical
+    observations (how this student learns), not personal-life details."""
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO kai_journal (user_id, session_id, note, created_at) "
+            "VALUES (?, ?, ?, ?)",
+            (user_id, session_id, note.strip(), time.time()),
+        )
+
+
+def read_journal(user_id: str, limit: int = 3) -> list[str]:
+    """Kai's most recent teaching observations, oldest first so they read
+    chronologically in his notes."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT note FROM kai_journal WHERE user_id = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (user_id, limit),
+        ).fetchall()
+    return [r["note"] for r in reversed(rows)]
+
+
 def relationship_memory(user_id: str) -> dict:
     """What Kai remembers about this learner across sessions.
 
     Everything here is pulled from real records (onboarding, session
-    summaries, the error model) so Kai's references to previous sessions
-    are grounded — he is explicitly told to never invent a memory, and
-    this is the only memory he gets.
+    summaries, the error model, his own teaching journal) so Kai's
+    references to previous sessions are grounded — he is explicitly told
+    to never invent a memory, and this is the only memory he gets. It is
+    deliberately a TEACHER'S memory: observations about how this person
+    learns, not a companion's diary of their life.
     """
     ob = onboarding(user_id)
     profile = load_profile(user_id)
@@ -122,6 +148,10 @@ def relationship_memory(user_id: str) -> dict:
             "ORDER BY id DESC LIMIT 1",
             (user_id,),
         ).fetchone()
+        first_ts = conn.execute(
+            "SELECT MIN(created_at) FROM session_summaries WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()[0]
 
     memory: dict = {
         "sessions_together": total,
@@ -129,7 +159,9 @@ def relationship_memory(user_id: str) -> dict:
         "motivation": ob["motivation"],
         "interests": json.loads(ob["interests"]),
         "days_since_last": None,
+        "known_for_days": ((now - first_ts) / 86400.0) if first_ts else None,
         "last_session": None,
+        "journal": read_journal(user_id),
         "recurring_mistakes": [
             (r.signature, r.count)
             for r in profile.errors.recurring(now, subject=SUBJECT)[:3]
