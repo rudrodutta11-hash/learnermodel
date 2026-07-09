@@ -10,7 +10,8 @@ app = ["fastapi>=0.110", "uvicorn>=0.29", "anthropic>=0.40"]
 dev = ["pytest>=8", "fastapi>=0.110", "httpx>=0.27"]
 
 [tool.setuptools]
-packages = ["learner_model", "recommendation", "experience", "story", "app"]
+packages = ["learner_model", "recommendation", "experience", "story",
+            "teacher_brain", "app"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

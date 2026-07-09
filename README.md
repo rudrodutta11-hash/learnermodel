@@ -36,7 +36,14 @@ traditional course.
   companion with example conversations. Kai's session memory comes from
   real records only (`state.relationship_memory`) — he never invents
   history
-- `tests/` — model, engine, API, and persona tests
+- `teacher_brain/` + `docs/teacher_brain.md` — the layer that DECIDES,
+  above the Kai who TEACHES. It predicts what will work for a learner
+  (typed predictions with confidence + evidence), then checks at each
+  session's end whether it was right, building a per-learner track record.
+  Deterministic architecture, not ML yet. Kai teaches to the open
+  predictions; `GET /api/brain` exposes them; the recommendation engine
+  will consume the calibration eventually.
+- `tests/` — model, engine, API, persona, and Teacher Brain tests
 - `demo.py` — offline simulation showing the model learning a learner and
   transferring across subjects
 

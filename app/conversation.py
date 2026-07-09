@@ -115,6 +115,13 @@ def _teacher_context(session: dict, user_id: str) -> dict:
         # conversation.
         "memory": rec.get("memory"),
         "story_scene": rec.get("story_scene"),
+        # The Teacher Brain's live read going into this session — Kai teaches
+        # to these predictions (push if ready, protect confidence if not).
+        "predictions": [
+            {"statement": p.statement, "confidence": p.confidence,
+             "evidence": p.evidence}
+            for p in state.open_predictions(user_id)
+        ],
     }
 
 
@@ -175,12 +182,22 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
         "activity_type": "conversation", "minutes": req.minutes,
     }, session_id=session_id)
 
+    # The Teacher Brain forecasts this session before it starts. Predictions
+    # are stored OPEN and flow into Kai's context (here and via
+    # _teacher_context) so he teaches to them; resolved when the session ends.
+    predictions = state.make_predictions(user_id, session_id)
+
     context = {
         "goal": ob["goal"], "concepts": rec_snapshot["concepts"],
         "difficulty": rec.difficulty, "minutes": req.minutes,
         "learner": profile.summary(),
         "memory": rec_snapshot["memory"],
         "story_scene": scene,
+        "predictions": [
+            {"statement": p.statement, "confidence": p.confidence,
+             "evidence": p.evidence}
+            for p in predictions
+        ],
     }
     opener = state.teacher.chat(
         [{"role": "user", "content": OPENER_CUE.format(minutes=req.minutes)}],
@@ -275,6 +292,18 @@ def end(session_id: str, user_id: str = Depends(state.current_user)):
     # session (skipped when the learner never spoke — nothing was observed).
     if learner_turns > 0 and assessment.get("journal"):
         state.write_journal(user_id, session_id, assessment["journal"])
+
+    # The Teacher Brain finds out whether it was right: resolve the
+    # predictions it made at the start of this session against what happened.
+    outcome = state.session_outcome(
+        engaged=learner_turns > 0,
+        concepts=assessment["concepts"],
+        mistakes=assessment["mistakes"],
+        difficulty=json.loads(session["recommendation"])["difficulty"],
+        modality="conversation",
+        confidence=assessment["confidence"],
+    )
+    state.resolve_predictions(user_id, outcome)
 
     # Advance the story: this character's thread moves one beat forward and
     # records what the learner will remember — but only if the learner

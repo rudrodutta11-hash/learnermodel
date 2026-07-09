@@ -165,6 +165,9 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
         "activity_type": rec.activity_type.value,
     }, session_id=session_id)
 
+    # The Teacher Brain forecasts this session too; resolved at summary time.
+    state.make_predictions(user_id, session_id)
+
     return payload
 
 
@@ -182,6 +185,12 @@ def session_summary(data: SessionSummary, user_id: str = Depends(state.current_u
         engaged=data.engaged,
         session_id=data.session_id,
     )
+    # The Brain finds out whether it was right about this session.
+    state.resolve_predictions(user_id, state.session_outcome(
+        engaged=data.engaged, concepts=data.concepts, mistakes=data.mistakes,
+        difficulty=data.difficulty, modality=data.activity_type,
+        confidence=data.confidence,
+    ))
     upcoming = state.open_story_scene(user_id, time.time())
     summary["next_time"] = {
         "character": upcoming["character"]["name"],
@@ -189,6 +198,17 @@ def session_summary(data: SessionSummary, user_id: str = Depends(state.current_u
         "hook": upcoming["hook"],
     }
     return summary
+
+
+@app.get("/api/brain")
+def brain(user_id: str = Depends(state.current_user)):
+    """The Teacher Brain's current state: what it predicts for the next
+    session (open), and how accurate it has been for this learner so far
+    (calibration). The transparency window on the layer above Kai."""
+    return {
+        "open_predictions": [p.to_dict() for p in state.open_predictions(user_id)],
+        "calibration": state.prediction_calibration(user_id),
+    }
 
 
 @app.get("/api/home")

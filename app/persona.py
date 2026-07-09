@@ -228,6 +228,19 @@ def student_brief(context: dict[str, Any]) -> str:
     if context.get("time_note"):
         lines.append(f"- NOTE: {context['time_note']}")
 
+    # The Teacher Brain's read going into this session. These are YOUR
+    # instincts as their teacher — act on them: if you're reading "ready for
+    # more," push; if "protect confidence," engineer a win before difficulty.
+    predictions = context.get("predictions") or []
+    if predictions:
+        lines.append("")
+        lines.append("# Your read going in (teacher's instinct — act on it)")
+        for p in predictions:
+            conf = p.get("confidence")
+            hedge = ("You're fairly sure: " if conf and conf >= 0.75
+                     else "A hunch: " if conf and conf < 0.6 else "")
+            lines.append(f"- {hedge}{p['statement']} ({p['evidence']})")
+
     return "\n".join(lines)
 
 

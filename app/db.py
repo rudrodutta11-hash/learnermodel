@@ -97,4 +97,23 @@ def init_db() -> None:
                 created_at REAL NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_journal_user ON kai_journal(user_id, id);
+            -- The Teacher Brain's predictions: made at session start,
+            -- resolved at session end. The full prediction record (kind,
+            -- confidence, evidence, and the outcome filled in later) lives
+            -- in the JSON blob; the columns are just what we query on.
+            -- Rows ARE updated in place when a prediction resolves — this is
+            -- deliberately not append-only, because a prediction and its
+            -- outcome are one evolving record, and calibration reads the
+            -- resolved state.
+            CREATE TABLE IF NOT EXISTS teacher_predictions (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL REFERENCES users(id),
+                session_id TEXT,
+                kind TEXT NOT NULL,
+                resolved INTEGER NOT NULL DEFAULT 0,
+                created_at REAL NOT NULL,
+                data TEXT NOT NULL              -- full Prediction JSON
+            );
+            CREATE INDEX IF NOT EXISTS idx_pred_user
+                ON teacher_predictions(user_id, resolved, id);
         """)

@@ -19,6 +19,7 @@ from learner_model.store import load_profile as _load, save_profile
 from recommendation import RecommendationEngine, SessionContext, episode_preview
 from story import StoryEngine, character_by_id
 from story.store import load_story as _load_story, save_story as _save_story
+from teacher_brain import Prediction, SessionOutcome, TeacherBrain
 
 from . import auth, db
 from . import events as events_log
@@ -29,6 +30,7 @@ SUBJECT = "primary"  # MVP: one subject track per learner; the model is already 
 
 engine = RecommendationEngine()
 story_engine = StoryEngine()
+brain = TeacherBrain()
 teacher = make_teacher()
 
 
@@ -176,6 +178,82 @@ def read_journal(user_id: str, limit: int = 3) -> list[str]:
             (user_id, limit),
         ).fetchall()
     return [r["note"] for r in reversed(rows)]
+
+
+# ---- Teacher Brain: predict at session start, resolve at session end -------
+
+def make_predictions(user_id: str, session_id: str) -> list[Prediction]:
+    """Generate the Brain's forecast for a session about to begin and store
+    each as OPEN. Returns them so the caller can surface them to Kai."""
+    profile = load_profile(user_id)
+    now = time.time()
+    preds = brain.predict(profile, knowledge(user_id), now)
+    with db.connect() as conn:
+        for p in preds:
+            conn.execute(
+                "INSERT OR REPLACE INTO teacher_predictions "
+                "(id, user_id, session_id, kind, resolved, created_at, data) "
+                "VALUES (?, ?, ?, ?, 0, ?, ?)",
+                (p.id, user_id, session_id, p.kind.value, p.created_at,
+                 json.dumps(p.to_dict())),
+            )
+    return preds
+
+
+def open_predictions(user_id: str) -> list[Prediction]:
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT data FROM teacher_predictions "
+            "WHERE user_id = ? AND resolved = 0 ORDER BY id",
+            (user_id,),
+        ).fetchall()
+    return [Prediction.from_dict(json.loads(r["data"])) for r in rows]
+
+
+def session_outcome(*, engaged: bool, concepts: list[str], mistakes: list[str],
+                    difficulty: float, modality: str,
+                    confidence: float | None) -> SessionOutcome:
+    """Turn a finished session's results into the evidence the Brain resolves
+    predictions against. `success` is the fraction of practiced concepts the
+    learner got right."""
+    missed = set(mistakes)
+    got_right = [c for c in concepts if c not in missed]
+    success = (len(got_right) / len(concepts)) if concepts else (0.0 if mistakes else 1.0)
+    return SessionOutcome(
+        engaged=engaged, success=success, difficulty=difficulty, modality=modality,
+        concepts=tuple(concepts), mistakes=tuple(mistakes), confidence=confidence,
+    )
+
+
+def resolve_predictions(user_id: str, outcome: SessionOutcome) -> list[Prediction]:
+    """At session end, check every open prediction against what happened and
+    persist the outcome. This is the step where the teacher finds out whether
+    he was right — the heart of getting better over time."""
+    now = time.time()
+    resolved: list[Prediction] = []
+    for p in open_predictions(user_id):
+        updated = brain.resolve(p, outcome, now)
+        with db.connect() as conn:
+            conn.execute(
+                "UPDATE teacher_predictions SET resolved = ?, data = ? WHERE id = ?",
+                (1 if updated.resolved else 0, json.dumps(updated.to_dict()), updated.id),
+            )
+        resolved.append(updated)
+    return resolved
+
+
+def prediction_calibration(user_id: str) -> dict:
+    """How accurate the Brain's predictions have proven for this learner —
+    the growing track record. Eventually the recommendation engine reads
+    this to trust some prediction kinds more than others."""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT data FROM teacher_predictions "
+            "WHERE user_id = ? AND resolved = 1",
+            (user_id,),
+        ).fetchall()
+    decided = [Prediction.from_dict(json.loads(r["data"])) for r in rows]
+    return brain.calibration(decided)
 
 
 def relationship_memory(user_id: str) -> dict:
