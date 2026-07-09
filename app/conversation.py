@@ -166,10 +166,12 @@ def start(req: StartRequest, user_id: str = Depends(state.current_user)):
 
     session_id = new_session_id()
     with db.connect() as conn:
+        # ai_calls starts at 1 for the opener chat call below — conversation
+        # is realtime_analysis, so every turn is a live AI call we tally.
         conn.execute(
             "INSERT INTO conversation_sessions "
-            "(id, user_id, started_at, minutes, recommendation) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "(id, user_id, started_at, minutes, recommendation, ai_calls) "
+            "VALUES (?, ?, ?, ?, ?, 1)",
             (session_id, user_id, time.time(), req.minutes, json.dumps(rec_snapshot)),
         )
 
@@ -239,6 +241,10 @@ def message(session_id: str, req: MessageRequest,
 
     reply = state.teacher.chat(_as_chat_messages(_transcript(session_id, user_id)), context)
     _log_turn(session_id, user_id, "teacher", reply)
+    # One live AI call per turn — the cost signature of realtime_analysis.
+    with db.connect() as conn:
+        conn.execute("UPDATE conversation_sessions SET ai_calls = ai_calls + 1 "
+                     "WHERE id = ?", (session_id,))
 
     return {
         "reply": reply,
@@ -263,6 +269,13 @@ def end(session_id: str, user_id: str = Depends(state.current_user)):
     transcript = _transcript(session_id, user_id)
     context = _teacher_context(session, user_id)
     assessment = state.teacher.assess(transcript, context)
+
+    # Realtime cost ledger: opener + per-turn replies (tallied on the row)
+    # plus this one assess call. This is what realtime_analysis costs — many
+    # calls — and exactly what batch activities avoid.
+    total_calls = _session(session_id, user_id)["ai_calls"] + 1
+    state.record_cost(user_id, session_id, "conversation",
+                      state.AnalysisMode.REALTIME, ai_calls=total_calls)
 
     # Conversation mistakes are free-form signatures Kai identified from the
     # transcript (not necessarily concept ids), so log them explicitly here

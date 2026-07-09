@@ -55,7 +55,8 @@ def init_db() -> None:
                 started_at REAL NOT NULL,
                 ended_at REAL,
                 minutes REAL NOT NULL,
-                recommendation TEXT NOT NULL     -- JSON snapshot of the rec that opened it
+                recommendation TEXT NOT NULL,    -- JSON snapshot of the rec that opened it
+                ai_calls INTEGER NOT NULL DEFAULT 0  -- realtime AI calls tallied live
             );
             -- Append-only interaction event log. INSERT only — this table
             -- has no UPDATE or DELETE path anywhere in the app. Every
@@ -116,4 +117,19 @@ def init_db() -> None:
             );
             CREATE INDEX IF NOT EXISTS idx_pred_user
                 ON teacher_predictions(user_id, resolved, id);
+            -- Cost ledger: one row per finished activity, recording how many
+            -- AI calls it took and in which analysis mode — so spend can be
+            -- attributed by activity_type and analysis_mode. `billable` is 0
+            -- when the scripted/mock backend served it (no real credits).
+            CREATE TABLE IF NOT EXISTS activity_costs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id TEXT NOT NULL REFERENCES users(id),
+                session_id TEXT,
+                activity_type TEXT NOT NULL,
+                analysis_mode TEXT NOT NULL,
+                ai_calls INTEGER NOT NULL,
+                billable INTEGER NOT NULL,
+                created_at REAL NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_costs_user ON activity_costs(user_id, id);
         """)

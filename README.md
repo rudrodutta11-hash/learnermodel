@@ -43,7 +43,14 @@ traditional course.
   Deterministic architecture, not ML yet. Kai teaches to the open
   predictions; `GET /api/brain` exposes them; the recommendation engine
   will consume the calibration eventually.
-- `tests/` — model, engine, API, persona, and Teacher Brain tests
+- `app/analysis.py` + `docs/analysis_modes.md` — the cost architecture.
+  Each activity runs `realtime_analysis` (AI every turn — conversations,
+  live writing) or `batch_analysis` (scripted/local interaction, then ONE
+  compact AI call at the end — flashcards, quizzes, lessons). One batch
+  call replaces the many small calls a live-graded activity would make;
+  `GET /api/costs` attributes spend by activity_type and analysis_mode, and
+  cheap AI modes gently prefer batch formats.
+- `tests/` — model, engine, API, persona, Teacher Brain, and cost tests
 - `demo.py` — offline simulation showing the model learning a learner and
   transferring across subjects
 

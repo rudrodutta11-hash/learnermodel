@@ -21,8 +21,10 @@ from story import StoryEngine, character_by_id
 from story.store import load_story as _load_story, save_story as _save_story
 from teacher_brain import Prediction, SessionOutcome, TeacherBrain
 
+from . import analysis
 from . import auth, db
 from . import events as events_log
+from .analysis import AnalysisMode, analysis_mode_for
 from .events import EventType
 from .teacher import make_teacher
 
@@ -180,6 +182,67 @@ def read_journal(user_id: str, limit: int = 3) -> list[str]:
     return [r["note"] for r in reversed(rows)]
 
 
+# ---- Cost ledger + batch analysis -----------------------------------------
+
+def record_cost(user_id: str, session_id: str | None, activity_type: str,
+                analysis_mode: AnalysisMode, ai_calls: int) -> None:
+    """Log what a finished activity cost, by activity_type and analysis_mode.
+    `billable` reflects whether the live backend actually spends credits."""
+    with db.connect() as conn:
+        conn.execute(
+            "INSERT INTO activity_costs (user_id, session_id, activity_type, "
+            "analysis_mode, ai_calls, billable, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (user_id, session_id, activity_type, analysis_mode.value, ai_calls,
+             1 if teacher.billable else 0, time.time()),
+        )
+
+
+def cost_report(user_id: str) -> dict:
+    """Spend rolled up by activity_type and analysis_mode — the answer to
+    'where are the AI calls going?'"""
+    with db.connect() as conn:
+        rows = conn.execute(
+            "SELECT activity_type, analysis_mode, SUM(ai_calls) AS calls, "
+            "COUNT(*) AS sessions, SUM(billable * ai_calls) AS billable_calls "
+            "FROM activity_costs WHERE user_id = ? "
+            "GROUP BY activity_type, analysis_mode ORDER BY calls DESC",
+            (user_id,),
+        ).fetchall()
+    by = [dict(r) for r in rows]
+    return {
+        "by_activity": by,
+        "total_ai_calls": sum(r["calls"] for r in by),
+        "total_billable_calls": sum(r["billable_calls"] for r in by),
+        "realtime_calls": sum(r["calls"] for r in by
+                              if r["analysis_mode"] == AnalysisMode.REALTIME.value),
+        "batch_calls": sum(r["calls"] for r in by
+                           if r["analysis_mode"] == AnalysisMode.BATCH.value),
+    }
+
+
+def batch_analyze(user_id: str, session_id: str, *, activity_type: str,
+                  concepts: list[str], mistakes: list[str],
+                  confidence: float | None, duration_seconds: float,
+                  attempted: int | None = None, correct: int | None = None,
+                  missed_items: list[dict] | None = None) -> dict:
+    """The ONE end-of-session AI call for a batch activity: compact results
+    in, full assessment out (notes + journal). Content and grading already
+    happened locally; this single call adds the qualitative layer that a
+    conversation gets from its live turns."""
+    results = analysis.compact_results(
+        activity_type=activity_type, concepts=concepts, mistakes=mistakes,
+        attempted=attempted, correct=correct, duration_seconds=duration_seconds,
+        confidence=confidence, missed_items=missed_items,
+    )
+    context = {"goal": onboarding(user_id)["goal"], "concepts": concepts,
+               "memory": relationship_memory(user_id)}
+    assessment = teacher.analyze_session(results, context)
+    # Exactly one AI call, whatever the activity's size.
+    record_cost(user_id, session_id, activity_type, AnalysisMode.BATCH, ai_calls=1)
+    return assessment
+
+
 # ---- Teacher Brain: predict at session start, resolve at session end -------
 
 def make_predictions(user_id: str, session_id: str) -> list[Prediction]:
@@ -329,7 +392,8 @@ def next_recommendation(user_id: str, minutes: float) -> dict:
     rec = engine.recommend(
         profile, knowledge(user_id),
         SessionContext(subject=SUBJECT, available_minutes=minutes, goal=ob["goal"],
-                       recent_activity_types=recent_activity_types(user_id)),
+                       recent_activity_types=recent_activity_types(user_id),
+                       prefer_batch=analysis.cost_prefers_batch()),
     )
     return {
         "activity_type": rec.activity_type.value,

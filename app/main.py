@@ -66,6 +66,11 @@ class SessionSummary(BaseModel):
     duration_seconds: float = 0.0
     difficulty: float = 0.5
     session_id: str | None = None       # correlates back to /api/recommendation
+    # Compact batch-analysis inputs (batch activities grade locally, then
+    # send these aggregates — never the full raw item-by-item history).
+    attempted: int | None = None
+    correct: int | None = None
+    missed_items: list[dict] = []       # only the stumbles, for good AI notes
 
 
 # -- routes -------------------------------------------------------------------
@@ -112,6 +117,7 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
     context = SessionContext(
         subject=state.SUBJECT, available_minutes=minutes, goal=onboarding["goal"],
         recent_activity_types=state.recent_activity_types(user_id),
+        prefer_batch=state.analysis.cost_prefers_batch(),
     )
     rec = state.engine.recommend(profile, knowledge, context)
     session_id = new_session_id()
@@ -150,6 +156,11 @@ def recommendation(minutes: float, user_id: str = Depends(state.current_user)):
         "explanation": rec.explanation, "estimated_minutes": rec.estimated_minutes,
     }, session_id=session_id)
 
+    # Content generation is the activity's "pre-generated content" — a
+    # delivery cost, not an analysis cost, and cacheable/amortizable per
+    # concept rather than per session. The cost ledger tracks ANALYSIS calls
+    # (realtime turns vs the one batch call), which is where the request's
+    # savings live; content generation is out of that scope by design.
     experience = get_experience(rec.activity_type)
     plan = experience.build(rec, profile, state.teacher, goal=onboarding["goal"],
                             memory=memory)
@@ -185,6 +196,24 @@ def session_summary(data: SessionSummary, user_id: str = Depends(state.current_u
         engaged=data.engaged,
         session_id=data.session_id,
     )
+
+    # Batch analysis: the interaction ran locally (grading is client-side);
+    # now ONE compact AI call adds the qualitative layer a conversation gets
+    # from its live turns — teacher notes and a journal entry — without any
+    # per-item calls. This is where a structured activity earns its journal.
+    if data.engaged and data.concepts:
+        assessment = state.batch_analyze(
+            user_id, data.session_id or "",
+            activity_type=data.activity_type,
+            concepts=data.concepts, mistakes=data.mistakes,
+            confidence=data.confidence, duration_seconds=data.duration_seconds,
+            attempted=data.attempted, correct=data.correct,
+            missed_items=data.missed_items,
+        )
+        summary["teacher_notes"] = assessment.get("notes", "")
+        if assessment.get("journal"):
+            state.write_journal(user_id, data.session_id, assessment["journal"])
+
     # The Brain finds out whether it was right about this session.
     state.resolve_predictions(user_id, state.session_outcome(
         engaged=data.engaged, concepts=data.concepts, mistakes=data.mistakes,
@@ -198,6 +227,13 @@ def session_summary(data: SessionSummary, user_id: str = Depends(state.current_u
         "hook": upcoming["hook"],
     }
     return summary
+
+
+@app.get("/api/costs")
+def costs(user_id: str = Depends(state.current_user)):
+    """AI spend attributed by activity_type and analysis_mode — realtime vs
+    batch. The window on where the calls go and what's billable."""
+    return state.cost_report(user_id)
 
 
 @app.get("/api/brain")

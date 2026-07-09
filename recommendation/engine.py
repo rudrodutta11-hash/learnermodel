@@ -73,6 +73,20 @@ class SessionContext:
     # Activity types of the most recent sessions, newest first. Used for
     # the variety factor: same format twice in a row must EARN its repeat.
     recent_activity_types: tuple[str, ...] = ()
+    # Cost policy: when true (cheap/mock AI modes), gently prefer activities
+    # that need only one end-of-session AI call over realtime ones — used
+    # only when live adaptation isn't essential. Never a hard exclusion.
+    prefer_batch: bool = False
+
+
+# Activity types that need a live AI call every turn (realtime_analysis).
+# Under prefer_batch they take a small cost penalty — enough to break ties
+# toward cheaper batch formats, never enough to suppress a format the
+# learner clearly needs.
+REALTIME_ACTIVITIES: frozenset[Modality] = frozenset(
+    {Modality.CONVERSATION, Modality.WRITING, Modality.CALL}
+)
+BATCH_PREFERENCE_FACTOR = 0.8
 
 
 # A format repeated back-to-back is penalized (not banned — if flashcards
@@ -124,6 +138,7 @@ class RecommendationEngine:
                     * max(0.1, profile.challenge.fit(self._difficulty(profile)))
                     * self._time_fit(profile, context, activity)
                     * self._variety_factor(activity, context)
+                    * self._cost_factor(activity, context)
                 )
                 if best is None or score > best[0]:
                     best = (score, need, activity)
@@ -211,6 +226,12 @@ class RecommendationEngine:
             )
         )
         return needs
+
+    @staticmethod
+    def _cost_factor(activity: Modality, context: SessionContext) -> float:
+        if context.prefer_batch and activity in REALTIME_ACTIVITIES:
+            return BATCH_PREFERENCE_FACTOR
+        return 1.0
 
     @staticmethod
     def _variety_factor(activity: Modality, context: SessionContext) -> float:

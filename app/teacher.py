@@ -39,6 +39,8 @@ MODELS_BY_MODE = {
 class AnthropicTeacher:
     """Claude-backed Kai."""
 
+    billable = True  # calls to this teacher cost real credits
+
     def __init__(self, model: str) -> None:
         import anthropic
 
@@ -96,12 +98,41 @@ class AnthropicTeacher:
             return _clean_assessment(parsed, planned)
         return _fallback_assessment(planned)
 
+    def analyze_session(self, results: dict, context: dict[str, Any]) -> dict:
+        """The ONE batch-analysis call: given a compact structured summary of
+        a finished activity (counts, concepts, only the missed items — never
+        raw history), return the same assessment shape assess() produces.
+        This single call replaces the many small calls a live-graded activity
+        would otherwise make."""
+        planned = [str(c) for c in results.get("concepts") or []]
+        prompt = (
+            "A structured activity just finished. You did NOT watch it live — "
+            "here are the compact results. Write your private teaching notes "
+            "as ONLY a JSON object, no other text:\n"
+            '{"concepts": ["<concept id practiced>"], '
+            '"mistakes": ["<short-kebab-case signature of each real mistake>"], '
+            '"confidence": <your 0..1 read of the student\'s confidence>, '
+            '"notes": "<one sentence TO the student, in your voice — specific>", '
+            '"journal": "<1-2 sentences on HOW this student learns: a pattern, '
+            "a misconception's shape, pacing, a breakthrough. Strictly "
+            'pedagogical, no personal-life details.>"}\n'
+            f"Reuse the given concept ids where they apply.\n\n"
+            f"Results:\n{json.dumps(results, indent=2, default=str)}"
+        )
+        raw = self.generate(prompt, context)
+        parsed = _extract_json(raw)
+        if parsed is not None:
+            return _clean_assessment(parsed, planned)
+        return _fallback_assessment(planned)
+
 
 class ScriptedTeacher:
     """Deterministic offline Kai: keeps the product runnable and testable
     with zero API cost. Same interface, same personality — canned lines
     composed from the same memory the real Kai reads, so even the mock
     references previous sessions when they exist."""
+
+    billable = False  # scripted backend never touches the API
 
     def generate(self, instruction: str, context: dict[str, Any]) -> str:
         concepts = [str(c) for c in context.get("concepts") or []]
@@ -145,6 +176,20 @@ class ScriptedTeacher:
 
     def assess(self, transcript: list[dict[str, str]], context: dict[str, Any]) -> dict:
         return _fallback_assessment(context.get("concepts") or [])
+
+    def analyze_session(self, results: dict, context: dict[str, Any]) -> dict:
+        # Deterministic batch analysis from the compact results — same shape
+        # the real one-call analysis returns, so the whole pipeline runs free.
+        planned = [str(c) for c in results.get("concepts") or []]
+        result = _fallback_assessment(planned)
+        result["mistakes"] = [str(m) for m in results.get("mistakes") or []]
+        counts = results.get("counts") or {}
+        attempted, correct = counts.get("attempted", 0), counts.get("correct", 0)
+        act = results.get("activity_type", "activity")
+        if attempted:
+            result["notes"] = (f"{correct}/{attempted} on the {act.replace('_', ' ')} — "
+                               "the ones you missed are exactly what comes back next.")
+        return result
 
 
 def _scene_opener(scene: dict[str, Any], context: dict[str, Any]) -> str:
