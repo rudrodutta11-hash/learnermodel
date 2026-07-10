@@ -1,0 +1,53 @@
+{
+  "name": "beginner_spanish_returning",
+  "description": "Session 5 with a returning beginner. Carlos-the-taxi-driver scene. One seeded grammar error (yo tiene -> tengo) to test echo-correction. Turns are scheduled across a 5-minute budget so the arc traverses opening -> mid -> closing.",
+  "minutes": 5,
+  "context": {
+    "goal": "Learn Spanish",
+    "concepts": ["tener-present", "ordering-food"],
+    "difficulty": 0.45,
+    "learner": {
+      "modality_ranking": [["conversation", 0.71], ["flashcard", 0.42], ["quiz", 0.33]],
+      "attention_span_minutes": 6.0,
+      "calibration_bias": -0.05
+    },
+    "memory": {
+      "sessions_together": 4,
+      "known_for_days": 12.0,
+      "days_since_last": 2.0,
+      "level": "beginner",
+      "motivation": "trip to Peru",
+      "interests": ["travel", "cooking"],
+      "last_session": {
+        "activity_type": "flashcard",
+        "concepts": ["greetings", "numbers"],
+        "mistakes": ["ser-vs-estar"]
+      },
+      "recurring_mistakes": [["ser-vs-estar", 3]],
+      "journal": [
+        "Learns fastest when made to produce, not just recognize.",
+        "The 'ownership' framing is what finally unlocked ser vs estar for them."
+      ]
+    },
+    "story_scene": {
+      "character": {"name": "Carlos", "role": "taxi driver", "persona": "warm, chatty, asks a lot of questions"},
+      "returning": true,
+      "situation": "You're in Carlos's taxi, heading in from the Lima airport.",
+      "hook": "He wants to know what brings you to Peru.",
+      "memories": ["Last time he told you about his daughter's quinceanera."]
+    },
+    "predictions": [
+      {
+        "statement": "Ready for more challenge - push the difficulty up a notch.",
+        "confidence": 0.72,
+        "evidence": "Succeeding around 88% and stays with it when it gets hard."
+      }
+    ]
+  },
+  "learner_turns": [
+    {"text": "Hola Carlos! Estoy aqui para vacaciones.", "elapsed_min": 0.7},
+    {"text": "yo tiene mucha hambre", "elapsed_min": 2.2, "seeded_error": true, "expected_echo": "tengo"},
+    {"text": "Quiero comer algo tipico. Que recomiendas?", "elapsed_min": 3.6},
+    {"text": "Perfecto, gracias Carlos!", "elapsed_min": 4.8}
+  ]
+}

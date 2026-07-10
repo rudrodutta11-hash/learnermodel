@@ -92,3 +92,25 @@ pip install -e ".[dev]"
 pytest
 python demo.py   # watch the learner model adapt, then transfer subjects
 ```
+
+## Validate Kai against the real model
+
+`harness/` runs the REAL model (cheap mode / Haiku) through one full
+5-minute session arc — open → middle → close — with a scripted learner, so
+you can see where the live model diverges from the mock-tuned behavior
+before touching any prompt. It reuses the shipping persona, opener, and
+phase directives verbatim (measurement only, no prompt changes).
+
+```bash
+export ANTHROPIC_API_KEY=sk-...
+python -m harness.validate_conversation            # cheap / Haiku by default
+python -m harness.validate_conversation --self-test  # rule logic only, no API
+```
+
+It saves a timestamped, phase-labeled transcript to `transcripts/` (JSON +
+Markdown), scores the output against our rules (banned language,
+producing-early, echo-correction, 1–3-sentence turns, a close that names one
+specific thing done well — see `harness/rules.py`), prints a pass/fail
+report, and logs the run's token cost. `harness/SAMPLE_REPORT.md` shows the
+output shape. The rule logic is itself covered by `tests/test_harness_rules.py`
+(no tokens spent).
