@@ -66,14 +66,14 @@ uvicorn app.main:app --reload
 
 The AI teacher's backend is selected by `AI_MODE`:
 
-| `AI_MODE` | Backend | Cost |
-|---|---|---|
-| `mock` (default) | `ScriptedTeacher` — deterministic, no network | Free |
-| `cheap` | Claude Haiku (`claude-haiku-4-5`) | Lowest-cost real model |
-| `premium` | Claude Opus (`claude-opus-4-8`) | Production-quality generation |
+| `AI_MODE` | Backend | Cost | What you get |
+|---|---|---|---|
+| `mock` (default) | `ScriptedTeacher` — deterministic, no network | Free | **Dev harness, NOT the app.** Kai's voice is stubbed — no real teaching content is generated. The learner model, story engine, journal, Teacher Brain, and cost ledger all run for real; only the words are placeholders. |
+| `cheap` | Claude Haiku (`claude-haiku-4-5`) | Pennies (a mini lesson is a fraction of a cent) | The actual product: real lessons, real conversations |
+| `premium` | Claude Opus (`claude-opus-4-8`) | Highest quality | Production-quality generation |
 
-Default is `mock` so building, testing, and demoing never touches your
-credits. Opt into real generation explicitly:
+Default is `mock` so building and testing never touches your credits —
+but **to actually use the app as a learner, run `cheap` or `premium`**:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-...

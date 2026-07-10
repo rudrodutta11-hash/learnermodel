@@ -135,6 +135,10 @@ class ScriptedTeacher:
     billable = False  # scripted backend never touches the API
 
     def generate(self, instruction: str, context: dict[str, Any]) -> str:
+        # The mock has no content to teach — say so honestly instead of
+        # leaking the internal stage direction and looking broken. The rest
+        # of the product (learner model, story, journal, Brain, costs) still
+        # runs for real; only Kai's voice is stubbed here.
         concepts = [str(c) for c in context.get("concepts") or []]
         goal = context.get("goal", "your goal")
         minutes = context.get("minutes", "a few")
@@ -143,7 +147,13 @@ class ScriptedTeacher:
         return (
             f"{opener}We've got {minutes} minutes — enough for {focus}. "
             f"It's the highest-value step toward {goal} right now, so let's "
-            f"not waste it.\n\n({instruction})"
+            f"not waste it.\n\n"
+            f"⚠ You're in offline mode (AI_MODE=mock) — Kai's voice is "
+            f"stubbed, so there's no real teaching content on this screen. "
+            f"Your progress, story, and teacher memory all still work.\n\n"
+            f"To get the real Kai:\n"
+            f"  export ANTHROPIC_API_KEY=sk-...\n"
+            f"  AI_MODE=cheap uvicorn app.main:app --reload"
         )
 
     def chat(self, messages: list[dict[str, str]], context: dict[str, Any]) -> str:
